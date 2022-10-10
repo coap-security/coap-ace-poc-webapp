@@ -17,10 +17,9 @@ self.addEventListener('install', function(e) {
 
 self.addEventListener('fetch', (e) => {
   e.respondWith(
-    // Many users add to this a `.then((response) => response ||
-    // fetch(e.request))`, but AIU this is just a fallback for files not in
-    // all_files, and I rather have things fail hard in a PoC than have errors
-    // slip in when all_files is incomplete.
     caches.match(e.request)
+      // It'd be tempting to leave that out, but if something at installation
+    // failed and the scripts are not accessible through the service worker, at least they can be fetched now.
+      .then(function (response) { if (response) { return response } else { console.warn("Fetch resulted in cache miss, trying again for", e.request); return fetch(e.request); }})
   );
 });
