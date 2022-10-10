@@ -2,10 +2,19 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <!-- avoid errors from 404'ing favicon.ico -->
+    <link rel="icon" href="icon.svg" />
+    <!-- make this a PWA -->
+    <link rel="manifest" href="manifest.json" />
+    <link rel="copy-file" href="manifest.json" />
+    <link rel="copy-file" href="service_worker.js" />
     <title>Web socket demo</title>
     <!-- Salute the hat of the history of mobile browsers -->
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <script type="module">
+      navigator.serviceWorker
+              .register('./service_worker.js');
+
       import init from './coap-ace-poc-webapp.js';
       await init();
     </script>
