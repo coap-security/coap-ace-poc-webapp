@@ -42,12 +42,22 @@ impl Component for Model {
 
     fn view(&self, ctx: &Context<Self>) -> Html {
         let link = ctx.link();
+
+        let navigator = web_sys::window().expect("This is running inside a web browser")
+            .navigator();
+        let has_bluetooth = navigator.bluetooth().is_some();
+
+        let bluetooth_button = match has_bluetooth {
+            true => html! { <button onclick={link.callback(|_| ())}>{ "Scan BLE for CoAP-over-GATT" }</button> },
+            false => html! { <button disabled=true title="Bluetooth not available in this browser">{ "Scan BLE for CoAP-over-GATT" }</button> }
+        };
+
         html! {
             <div>
                 <h1>{ "Hello CoAP!" }</h1>
                 <p>{ "This page currently just demonstrates that the browser is capable of executing WebAssembly, and that the build process is functional." }</p>
                 <p>{ "Click the button below to show that the browser supports Web Bluetooth. If a CoAP-over-GATT capable device is within reach, it will show in this dialogue" }</p>
-                <button onclick={link.callback(|_| ())}>{ "Scan BLE for CoAP-over-GATT" }</button>
+                { bluetooth_button }
             </div>
         }
     }
@@ -60,4 +70,6 @@ pub fn main() {
         .expect("Console not available for logging");
 
     yew::start_app::<Model>();
+
+    log::info!("App started.");
 }
