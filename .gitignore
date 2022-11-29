@@ -1,2 +1,3 @@
 /target
 /public/coap-ace-poc-webapp*
+/public/service_worker.js
