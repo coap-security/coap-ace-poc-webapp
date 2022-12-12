@@ -1,6 +1,11 @@
 // Based on Mozilla's PWA examples from https://github.com/mdn/pwa-examples/,
 // published under CC0
 
+// Populated by the build process, this ensures there is variation on the
+// service worker file, so updates get eventually detected (although they might
+// need a manual refresh, or even a double refresh)
+// Build-ID: BUILDID
+
 var all_files = [
   './',
   './manifest.json',
