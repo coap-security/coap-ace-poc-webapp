@@ -12,7 +12,10 @@ and how it is used in practice, please see
 [the corrresponding firmare's README file],
 which explains the whole setup.**
 
+Documentation on the implementation is [available through GitLab pages].
+
 [the corrresponding firmare's README file]: https://gitlab.com/oscore/coap-ace-poc-firmware/-/blob/main/README.md
+[available through GitLab pages]: https://oscore.gitlab.io/coap-ace-poc-webapp/doc/
 
 License
 -------

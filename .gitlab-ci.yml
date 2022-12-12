@@ -6,6 +6,9 @@ pages:
     - RUSTFLAGS=--cfg=web_sys_unstable_apis cargo build --target wasm32-unknown-unknown --release
     - wasm-bindgen target/wasm32-unknown-unknown/release/coap-ace-poc-webapp.wasm --out-dir public/ --web
     - 'sed "s/BUILDID/$(cat public/{index.html,coap-ace-poc*} | sha256sum | cut -f1 -d" ")/" < public/service_worker.js.in > public/service_worker.js'
+
+    - RUSTFLAGS=--cfg=web_sys_unstable_apis cargo doc --target wasm32-unknown-unknown
+    - cp -a target/wasm32-unknown-unknown/doc public/doc
   artifacts:
     paths:
       - public
