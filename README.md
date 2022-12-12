@@ -15,7 +15,7 @@ which explains the whole setup.**
 Documentation on the implementation is [available through GitLab pages].
 
 [the corrresponding firmare's README file]: https://gitlab.com/oscore/coap-ace-poc-firmware/-/blob/main/README.md
-[available through GitLab pages]: https://oscore.gitlab.io/coap-ace-poc-webapp/doc/
+[available through GitLab pages]: https://oscore.gitlab.io/coap-ace-poc-webapp/doc/coap_ace_poc_webapp/
 
 License
 -------
