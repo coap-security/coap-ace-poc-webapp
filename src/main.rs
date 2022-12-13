@@ -1,8 +1,25 @@
+//! CoAP/ACE PoC: Web application
+//!
+//! This application is a user interface for embedded devices offering CoAP services over
+//! Bluetooth, typically running the [CoAP/ACE PoC demo firmware]. As directed by the user, it
+//! connects to a device, reads the device's temperature or configures it, after obtaining suitable
+//! credentials through an ACE authroization server.
+//!
+//! It is built using the [yew] framework, and thus is compiled into WASM code that executes inside
+//! a browser as a web application.
+//!
+//! [CoAP/ACE PoC demo firmware]: https://gitlab.com/oscore/coap-ace-poc-firmware
+//! [yew]: https://yew.rs/
+
 use yew::prelude::*;
 
 mod ws;
 mod ble;
 
+/// Main application component
+///
+/// This renders to the full application view, and hooks up its UI and network elements to receive
+/// [Message]s.
 struct Model {
     blepool: Option<ble::BlePool>,
     websockets: Option<ws::ClientPool>,
@@ -14,19 +31,31 @@ struct Model {
     tokens: std::vec::Vec<dcaf::AccessTokenResponse>,
 }
 
+/// Events that the main [Model] receives
 enum Message {
+    /// User request to scan for new BLE devices
     ScanBle,
+    /// User request to read a device's temperature
+    ReadTemperature(String),
+    /// User request to make a device blink
+    Identify(String),
+    /// User request to set a device's number of idle LEDs
+    SetIdle(String, u8),
+
+    /// Message from the BLE task. The message is passed on to the [Model::blepool] which can
+    /// actually make sense of it. See [Model::link_ble_queue] for why the Receiver is there.
+    SomethingBleChanged(futures::channel::mpsc::Receiver<ble::BackToFrontMessage>, ble::BackToFrontMessage),
+    NoOp,
+
     GetToken,
     ReturnWebsockets(ws::ClientPool),
-    SomethingBleChanged(futures::channel::mpsc::Receiver<ble::BackToFrontMessage>, ble::BackToFrontMessage),
-    ReadTemperature(String),
-    Identify(String),
-    SetIdle(String, u8),
-    NoOp,
 }
 use Message::*;
 
 impl Model {
+    /// An allways-running yew "send_future" that waits for changes from the Bluetooth side, and
+    /// passes them on as events. It also passes on the queue, so that when the model reacts to the
+    /// message, it can start the cycle anew.
     fn link_ble_queue(ctx: &Context<Self>, mut queue: futures::channel::mpsc::Receiver<ble::BackToFrontMessage>) {
         ctx.link().send_future(async move {
             use futures::stream::StreamExt;
