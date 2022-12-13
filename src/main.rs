@@ -13,7 +13,6 @@
 
 use yew::prelude::*;
 
-mod ws;
 mod ble;
 
 /// Main application component
@@ -22,7 +21,6 @@ mod ble;
 /// [Message]s.
 struct Model {
     blepool: Option<ble::BlePool>,
-    websockets: Option<ws::ClientPool>,
     //
     // Not storing some pool for running async functions in -- rather trusting wasm_bindgen_futures
     // that its spawn_local is efficient (the implementation does look like it's running on a
@@ -46,9 +44,6 @@ enum Message {
     /// actually make sense of it. See [Model::link_ble_queue] for why the Receiver is there.
     SomethingBleChanged(futures::channel::mpsc::Receiver<ble::BackToFrontMessage>, ble::BackToFrontMessage),
     NoOp,
-
-    GetToken,
-    ReturnWebsockets(ws::ClientPool),
 }
 use Message::*;
 
@@ -107,7 +102,6 @@ impl Component for Model {
 
         Model {
             blepool,
-            websockets: Some(ws::ClientPool::new()),
             tokens,
         }
     }
@@ -117,25 +111,6 @@ impl Component for Model {
             ScanBle => {
                 self.blepool.as_mut().unwrap().connect();
                 false
-            }
-
-            GetToken => {
-                let Some(mut websockets) = self.websockets.take() else { return true };
-                ctx.link().send_future(async move {
-                    websockets.request("as.coap.amsuess.com", ()).await;
-                    log::info!("Request returned, should be dropping the lock...");
-
-                    ReturnWebsockets(websockets)
-                });
-
-                // Always re-render: Some button is very very likely to be blocked now
-                true
-            },
-
-            ReturnWebsockets(ws) => {
-                self.websockets = Some(ws);
-                // A button will now look different
-                true
             }
 
             SomethingBleChanged(queue, message) => {
@@ -228,10 +203,6 @@ impl Component for Model {
 
                 <h2>{ "Tokens" }</h2>
                 { token_list }
-
-                <h2>{ "WebSockets" }</h2>
-                <p>{ "…will be created on demand, actually" }</p>
-                <button onclick={link.callback(|_| GetToken)} disabled={ !self.websockets.is_some() }>{ "Get a token" }</button>
             </div>
         }
     }
