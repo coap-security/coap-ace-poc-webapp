@@ -75,6 +75,7 @@ struct BlePoolBackend {
     front2back: futures::channel::mpsc::Receiver<FrontToBackMessage>,
     back2front: futures::channel::mpsc::Sender<BackToFrontMessage>,
     connections: std::collections::HashMap<DeviceId, BleConnection>,
+    security_contexts: std::collections::HashMap<String, liboscore::PrimitiveContext>,
 }
 
 struct BleConnection {
@@ -263,6 +264,7 @@ impl BlePoolBackend {
             front2back,
             back2front,
             connections: Default::default(),
+            security_contexts: Default::default(),
         };
 
         loop {
@@ -276,8 +278,56 @@ impl BlePoolBackend {
                         Ok(id) => {
                             self_.notify_device_list().await;
                             self_.write_time(&id).await;
-                            let token_response = self_.write_authzinfo(&id, hex_literal::hex!("D08344A101181FA1054D67D813D2CDBC2859F0C2E9F330584CF30B8F55A8AF8D1DD20DC0DB446850E64539396B0FACFD8BEAEFFD9B0393986EF9D2F8E718A372EF4C4FB9A67EF2D2402602345A7671D423085FF314485A8AF1FDE41F10DC1720D02364D50B").as_slice()).await;
-                            log::info!("Response to token request: {:?}", token_response);
+
+                            let token_response = hex_literal::hex!("
+a2 01 58 65 d0 83 44 a1  01 18 1f a1 05 4d 67 d8
+13 d2 cd bc 28 59 f0 c2  e9 f3 30 58 4c f3 0b 8f
+55 a8 af 8d 1d d2 0d c0  db 44 68 50 e6 45 39 39
+6b 0f ac fd 8b ea ef fd  9b 03 93 98 6e f9 d2 f8
+e7 18 a3 72 ef 4c 4f b9  a6 7e f2 d2 40 26 02 34
+5a 76 71 d4 23 08 5f f3  14 48 5a 8a f1 fd e4 1f
+10 dc 17 20 d0 23 64 d5  0b 08 a1 04 a4 00 41 02
+02 50 a4 ac 59 1b d4 1c  d6 21 ef a7 92 53 6a 4e
+e5 e0 05 41 8c 06 41 02
+");
+                            use dcaf::ToCborMap;
+                            let token_response = dcaf::AccessTokenResponse::deserialize_from(token_response.as_slice())
+                                .unwrap();
+                            dbg!(&token_response);
+                            let material = match token_response.cnf {
+                                Some(dcaf::ProofOfPossessionKey::OscoreInputMaterial(mat)) => mat,
+                                _ => panic!("Token response was not for ACE OSCORE profile")
+                            };
+
+                            let token = token_response.access_token;
+
+                            // "The use of a 64-bit long random number is RECOMMENDED"
+                            let nonce1 = &rand::random::<[u8; 8]>();
+                            // Picking an arbitrary long one that's not even unique: We're only a
+                            // server with this peer, so this gets never sent, and we always know
+                            // from context when to use this one.
+                            let client_recipient_id = b"1234";
+                            log::warn!("My recipient ID is {:?}", client_recipient_id);
+
+                            match self_.write_authzinfo(&id, nonce1, client_recipient_id, &token).await {
+                                Ok((nonce2, server_recipient_id)) => {
+                                    log::info!("Should derive using {nonce2:?} and {server_recipient_id:?}");
+
+                                    let context = ace_oscore_helpers::oscore_claims::derive(
+                                        material,
+                                        nonce1,
+                                        &nonce2,
+                                        &server_recipient_id,
+                                        client_recipient_id,
+                                        ).unwrap();
+
+                                    log::info!("Derived context {:?} now to be used with {:?}", &context, &id);
+                                    self_.security_contexts.insert(id.clone(), context);
+                                }
+                                Err(e) => {
+                                    log::error!("Error occurred attempting to send a token: {:?}", e);
+                                }
+                            }
                         },
                         Err(e) => {
                             log::error!("Could not connect: {e}");
@@ -301,24 +351,31 @@ impl BlePoolBackend {
         }
     }
 
-    async fn send_request<R>(
+    // Note that we hand out a &mut ReadMessage as that also implements (some small parts of)
+    // MutableWritableMessage
+    async fn send_request<R, CARRY>(
         &mut self,
         id: &str,
-        write_request: impl FnOnce(&mut coap_gatt_utils::WriteMessage<'_>),
-        read_response: impl FnOnce(&coap_gatt_utils::ReadMessage<'_>) -> R,
+        write_request: impl FnOnce(&mut coap_gatt_utils::WriteMessage<'_>) -> CARRY,
+        read_response: impl FnOnce(&mut coap_gatt_utils::ReadWriteMessage<'_>, CARRY) -> R,
     ) -> R {
         let connection = &self.connections[id];
 
-        let mut request = coap_gatt_utils::write::<400>(write_request);
+        let mut carry = None;
+        let mut request = coap_gatt_utils::write::<400>(|msg| {carry = Some(write_request(msg));});
+        // FIXME: Maybe change coap_gatt_utils so this nees less patching?
+        let carry = carry.expect("write always invokes the writer");
 
         log::debug!("Writing to charcteristic with length {}", request.len());
         
         connection.characteristic.write_value_with_u8_array(&mut request)
             .js2rs()
             .await
-            .unwrap();
+            // FIXME: How can we do better here? Can this be discovered in advance, and then made
+            // usable by the application in `.available_len()`?
+            .expect("Request exceeds length the device can accept");
 
-        let response = loop {
+        let mut response = loop {
             let response: js_sys::DataView = connection.characteristic.read_value()
                 .js2rs()
                 .await
@@ -335,10 +392,69 @@ impl BlePoolBackend {
             log::info!("Read was zero-length, trying again...");
         };
 
-        let coap_response = coap_gatt_utils::parse(&response)
+        let mut coap_response = coap_gatt_utils::parse_mut(&mut response)
             .unwrap();
 
-        read_response(&coap_response)
+        read_response(&mut coap_response, carry)
+    }
+
+    async fn send_request_protected<R, CARRY>(
+        &mut self,
+        id: &str,
+        write_request: impl FnOnce(&mut liboscore::ProtectedMessage) -> CARRY,
+        read_response: impl FnOnce(&liboscore::ProtectedMessage, CARRY) -> R,
+    ) -> R {
+        // While we process this, no other access to the context is possible. That's kind of
+        // sub-optimal, but a) a practical simplification for tossing it around between to
+        // closures, and b) kind of a consequence of PrimitiveContext only being usable &mut rather
+        // than being usable through the more elaborate means provided by liboscore.
+        let mut ctx = self.security_contexts.remove(id)
+            .unwrap();
+
+        let (ctx, user_response) = self.send_request(
+            id,
+            |request| {
+                let (correlation, user_carry) = liboscore::protect_request(
+                    request,
+                    &mut ctx,
+                    |request| {
+                        write_request(request)
+                    }
+                );
+                (correlation, ctx, user_carry)
+            },
+            |response, (mut correlation, mut ctx, user_carry)| {
+                use coap_message::{MessageOption, ReadableMessage};
+                // FIXME: We need to copy things out because ReadableMessage by design only hands out
+                // short-lived values (so they can be built in the iterator if need be). On the
+                // plus side, this means that we're not running into the lifetime trouble one'd
+                // expect when passing unprotect_response both a mutable message *and* an option
+                // that references data inside it.
+                let mut oscore_option: Option<Vec<u8>> = None;
+                for o in response.options() {
+                    if o.number() == coap_numbers::option::OSCORE {
+                        oscore_option = Some(o.value().into());
+                        break;
+                    }
+                }
+                let oscore_option = liboscore::OscoreOption::parse(
+                        oscore_option.as_ref().expect("No OSCORE option") // FIXME error handling
+                    )
+                    .expect("Unparsable OSCORE option");
+
+                let user_response = liboscore::unprotect_response(
+                    response,
+                    &mut ctx,
+                    oscore_option,
+                    &mut correlation,
+                    |response| read_response(response, user_carry),
+                );
+                (ctx, user_response)
+            }).await;
+
+        self.security_contexts.insert(id.to_string(), ctx);
+
+        user_response
     }
 
     async fn write_time(&mut self, id: &str) {
@@ -354,21 +470,21 @@ impl BlePoolBackend {
                         request.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"time");
                         request.set_payload(&time_now_buffer);
                      },
-                     |response| {
+                     |response, ()| {
                         use coap_message::ReadableMessage;
                         log::info!("Time written, code {:?}", response.code());
                      }).await;
     }
 
     async fn read_temperature(&mut self, id: &str) -> Result<f32, &'static str> {
-        self.send_request(&id,
+        self.send_request_protected(&id,
              |request| {
                 use coap_message::MinimalWritableMessage;
                 request.set_code(coap_numbers::code::GET.try_into().unwrap());
                 request.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"temp");
                 request.set_payload(&[]);
              },
-             |response| {
+             |response, ()| {
                 use coap_message::ReadableMessage;
                 if u8::from(response.code()) != coap_numbers::code::CONTENT {
                     Err("Unsuccessful request")
@@ -407,14 +523,14 @@ impl BlePoolBackend {
     async fn identify(&mut self, id: &str) {
         // No error handling because this resource returns success anyway (and the success is
         // indicated remotely)
-        self.send_request(&id,
+        self.send_request_protected(&id,
              |request| {
                 use coap_message::MinimalWritableMessage;
                 request.set_code(coap_numbers::code::POST.try_into().unwrap());
                 request.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"identify");
                 request.set_payload(&[]);
              },
-             |_| {}).await
+             |_, ()| {}).await
     }
 
     async fn set_idle(&mut self, id: &str, level: u8) {
@@ -424,33 +540,62 @@ impl BlePoolBackend {
         ciborium::ser::into_writer(&level, &mut level_buffer).expect("Level can be encoded");
         // No error handling because this resource returns success anyway (and the success is
         // indicated remotely)
-        self.send_request(&id,
+        self.send_request_protected(&id,
              |request| {
                 use coap_message::MinimalWritableMessage;
                 request.set_code(coap_numbers::code::PUT.try_into().unwrap());
                 request.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"leds");
                 request.set_payload(&level_buffer);
              },
-             |_| {}).await
+             |_, ()| {}).await
     }
 
     // FIXME actually token plus local nonce1 and id1
-    async fn write_authzinfo(&mut self, id: &str, token: &[u8]) -> Result<(), u8> {
-        let code = self.send_request(id,
-                     |request| {
-                        use coap_message::MinimalWritableMessage;
-                        request.set_code(coap_numbers::code::POST.try_into().unwrap());
-                        request.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"authz-info");
-                        request.set_payload(&token);
-                     },
-                     |response| {
-                         use coap_message::ReadableMessage;
-                         response.code()
-                     }).await;
-        if code == coap_numbers::code::CHANGED {
-            Ok(())
-        } else {
-            Err(code)
-        }
+    /// Write a given `token` to the `/autz-info` endpoint of the device identified by `id`, with
+    /// the given `nonce` and `id1` (client recipient ID).
+    ///
+    /// Returns `(nonce2, id2)` on success, where the latter is the server's chosen recipient ID.
+    async fn write_authzinfo(&mut self, id: &str, nonce1: &[u8], id1: &[u8], token: &[u8]) -> Result<(Vec<u8>, Vec<u8>), &'static str> {
+        use ciborium_ll::{Encoder, Header};
+        let mut payload = Vec::with_capacity(token.len() + 15);
+        let mut encoder = Encoder::from(&mut payload);
+
+        encoder.push(Header::Map(Some(3))).unwrap();
+        encoder.push(Header::Positive(ace_oscore_helpers::ACCESS_TOKEN)).unwrap();
+        encoder.bytes(&token, None).unwrap();
+        encoder.push(Header::Positive(ace_oscore_helpers::NONCE1)).unwrap();
+        encoder.bytes(nonce1, None).unwrap();
+        encoder.push(Header::Positive(ace_oscore_helpers::ACE_CLIENT_RECIPIENTID)).unwrap();
+        encoder.bytes(id1, None).unwrap();
+
+        self.send_request(id,
+                |request| {
+                   use coap_message::MinimalWritableMessage;
+                   request.set_code(coap_numbers::code::POST.try_into().unwrap());
+                   request.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"authz-info");
+                   request.set_payload(&payload);
+                },
+                |response, ()| {
+                    use coap_message::ReadableMessage;
+                    if response.code() == coap_numbers::code::CHANGED {
+                        let response = response.payload();
+                        extern crate alloc;
+                        let mut response: alloc::collections::BTreeMap<u64, serde_bytes::ByteBuf> = ciborium::de::from_reader(response)
+                            .map_err(|_| "Wrong response structure")?;
+                        let nonce2 = response.remove(&ace_oscore_helpers::NONCE2)
+                            .ok_or("Nonce2 missing")?;
+                        let server_recipient_id = response.remove(&ace_oscore_helpers::ACE_SERVER_RECIPIENTID)
+                            .ok_or("Server recipient ID missing")?;
+                        if !response.is_empty() {
+                            return Err("Left-over elements");
+                        }
+
+                        log::info!("authz-info response {:?}", response);
+
+                        Ok((nonce2.into_vec(), server_recipient_id.into_vec()))
+                    } else {
+                        Err("Unsuccessful code")
+                    }
+                 }).await
     }
 }

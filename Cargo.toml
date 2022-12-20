@@ -27,7 +27,23 @@ coap-message = "0.2.3"
 coap-gatt-utils = { git = "https://gitlab.com/oscore/coap-gatt-utils/" }
 coap-numbers = "0.2.0"
 
-ciborium = "0.2"
+ciborium = { version = "0.2", default-features = false }
+ciborium-ll = { version = "0.2", default-features = false }
+ciborium-io = { version = "0.2", default-features = false }
+# one of the key tools when working with CBOR and serde...
+serde_bytes = "0.11"
+
+liboscore = { git = "https://gitlab.com/oscore/liboscore/", branch = "rust-backends" }
+liboscore-msgbackend = { git = "https://gitlab.com/oscore/liboscore/", branch = "rust-backends", features = [ "alloc" ] }
+# only to enable the feature
+# liboscore-cryptobackend = { git = "https://gitlab.com/oscore/liboscore/", branch = "rust-backends", features = [ "log_cryptographic_operations_including_secret_keys" ] }
+ace-oscore-helpers = { git = "https://gitlab.com/oscore/ace-oscore-helpers/", features = [ "liboscore" ] }
+rand = "0.8.5"
+# to enable the right backend for rand
+getrandom = { version = "0.2", features = [ "js" ] }
+
+# Some dependency pulls in serde_cbor with no default features (std), someone else pulls in serde with default features (std), but these need to be aligned
+serde_cbor = "*"
 
 [patch.crates-io]
 coset = { git = "https://github.com/chrysn-pull-requests/coset", branch = "oscore" }

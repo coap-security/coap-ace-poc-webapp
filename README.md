@@ -17,6 +17,16 @@ Documentation on the implementation is [available through GitLab pages].
 [the corrresponding firmare's README file]: https://gitlab.com/oscore/coap-ace-poc-firmware/-/blob/main/README.md
 [available through GitLab pages]: https://oscore.gitlab.io/coap-ace-poc-webapp/doc/coap_ace_poc_webapp/
 
+Typical issues
+--------------
+
+* "I changed something in the code, and now things are stuck at WASM load time with errors such as `Uncaught TypeError: Failed to resolve module specifier "env".`"
+
+  This is the Rust-WASM-browser way of telling you that there are missing symbols
+  (something the linker and wasm-bindgen can't tell you, for you might be providing them inside JavaScript).
+
+  You can find out which they are by applying `wasm-dis` to the `public/*.wasm`, and looking for mentions of "env" -- these will point you to the missing symbol.
+
 License
 -------
 
