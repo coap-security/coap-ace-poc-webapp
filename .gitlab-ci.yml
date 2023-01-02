@@ -1,8 +1,12 @@
 pages:
-  image: docker.io/rustdocker/rust:nightly
+  image: docker.io/debian:bookworm
   script:
+    # That libc6-dev-i386 fixes things indicates trouble somewhere else, buk
+    # thigns do pass tests with that.
+    - apt-get update && apt-get install -y curl git libclang-dev clang libc6-dev-i386 pkg-config libssl-dev
+    - "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain nightly"
+    - source "$HOME/.cargo/env"
     - rustup target add wasm32-unknown-unknown
-    - apt-get update && apt-get install -y libclang-dev
     - cargo install wasm-bindgen-cli
     - RUSTFLAGS=--cfg=web_sys_unstable_apis cargo build --target wasm32-unknown-unknown --release
     - wasm-bindgen target/wasm32-unknown-unknown/release/coap-ace-poc-webapp.wasm --out-dir public/ --web
