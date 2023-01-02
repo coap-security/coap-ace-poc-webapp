@@ -25,7 +25,6 @@ struct Model {
     // Not storing some pool for running async functions in -- rather trusting wasm_bindgen_futures
     // that its spawn_local is efficient (the implementation does look like it's running on a
     // single big global executor) -- or is it really ctx.link().send_future that is the way to go?
-
     tokens: std::vec::Vec<dcaf::AccessTokenResponse>,
 }
 
@@ -42,7 +41,10 @@ enum Message {
 
     /// Message from the BLE task. The message is passed on to the [Model::blepool] which can
     /// actually make sense of it. See [Model::link_ble_queue] for why the Receiver is there.
-    SomethingBleChanged(futures::channel::mpsc::Receiver<ble::BackToFrontMessage>, ble::BackToFrontMessage),
+    SomethingBleChanged(
+        futures::channel::mpsc::Receiver<ble::BackToFrontMessage>,
+        ble::BackToFrontMessage,
+    ),
     NoOp,
 }
 use Message::*;
@@ -51,7 +53,10 @@ impl Model {
     /// An allways-running yew "send_future" that waits for changes from the Bluetooth side, and
     /// passes them on as events. It also passes on the queue, so that when the model reacts to the
     /// message, it can start the cycle anew.
-    fn link_ble_queue(ctx: &Context<Self>, mut queue: futures::channel::mpsc::Receiver<ble::BackToFrontMessage>) {
+    fn link_ble_queue(
+        ctx: &Context<Self>,
+        mut queue: futures::channel::mpsc::Receiver<ble::BackToFrontMessage>,
+    ) {
         ctx.link().send_future(async move {
             use futures::stream::StreamExt;
             let message = queue.next().await;
@@ -59,7 +64,9 @@ impl Model {
             match message {
                 Some(message) => SomethingBleChanged(queue, message),
                 None => {
-                    log::error!("BLE pool ceased sending messages, won't try listening for them any more.");
+                    log::error!(
+                        "BLE pool ceased sending messages, won't try listening for them any more."
+                    );
                     NoOp
                 }
             }
@@ -73,7 +80,8 @@ impl Component for Model {
 
     fn create(ctx: &Context<Self>) -> Self {
         let mut tokens: std::vec::Vec<dcaf::AccessTokenResponse> = Default::default();
-        let response_from_ace_java = hex_literal::hex!("
+        let response_from_ace_java = hex_literal::hex!(
+            "
         a2 01 58 65 d0 83 44 a1  01 18 1f a1 05 4d 67 d8
         13 d2 cd bc 28 59 f0 c2  e9 f3 30 58 4c f3 0b 8f
         55 a8 af 8d 1d d2 0d c0  db 44 68 50 e6 45 39 39
@@ -83,9 +91,12 @@ impl Component for Model {
         10 dc 17 20 d0 23 64 d5  0b 08 a1 04 a4 00 41 02
         02 50 a4 ac 59 1b d4 1c  d6 21 ef a7 92 53 6a 4e
         e5 e0 05 41 8c 06 41 02
-        ");
+        "
+        );
         use dcaf::ToCborMap;
-        tokens.push(dcaf::AccessTokenResponse::deserialize_from(response_from_ace_java.as_slice()).unwrap());
+        tokens.push(
+            dcaf::AccessTokenResponse::deserialize_from(response_from_ace_java.as_slice()).unwrap(),
+        );
 
         let (blepool, blepool_notifications) = match ble::BlePool::new() {
             Err(e) => {
@@ -95,15 +106,11 @@ impl Component for Model {
             Ok((blepool, blepool_notifications)) => (Some(blepool), Some(blepool_notifications)),
         };
 
-
         if let Some(blepool_notifications) = blepool_notifications {
             Self::link_ble_queue(ctx, blepool_notifications);
         }
 
-        Model {
-            blepool,
-            tokens,
-        }
+        Model { blepool, tokens }
     }
 
     fn update(&mut self, ctx: &Context<Self>, message: Self::Message) -> bool {
@@ -146,9 +153,7 @@ impl Component for Model {
                 false
             }
 
-            NoOp => {
-                false
-            }
+            NoOp => false,
         }
     }
 
@@ -158,32 +163,36 @@ impl Component for Model {
         let has_bluetooth = self.blepool.is_some();
 
         let bluetooth_button = match has_bluetooth {
-            true => html! { <button onclick={link.callback(|_| ScanBle)}>{ "Add device" }</button> },
-            false => html! { <button disabled=true title="Bluetooth not available in this browser">{ "Add device" }</button> }
+            true => {
+                html! { <button onclick={link.callback(|_| ScanBle)}>{ "Add device" }</button> }
+            }
+            false => {
+                html! { <button disabled=true title="Bluetooth not available in this browser">{ "Add device" }</button> }
+            }
         };
 
         let bluetooth_list = match &self.blepool {
             Some(p) => html! { <ul class="devices">
-                { for p.active_connections().map(|(id, name)| {
-                    let name = name.unwrap_or("(unnamed)");
-                    let temp = p.latest_temperature(id)
-                        .map(|t| format!("{t} °C"))
-                        .unwrap_or_else(|| "temperature unknown".to_string());
-                    let read_temp = link.callback({let id = id.to_string(); move |_| ReadTemperature(id.clone())});
-                    let identify = link.callback({let id = id.to_string(); move |_| Identify(id.clone())});
-                    let idle_dark = link.callback({let id = id.to_string(); move |_| SetIdle(id.clone(), 0)});
-                    let idle_bright = link.callback({let id = id.to_string(); move |_| SetIdle(id.clone(), 4)});
-                    html! {
-                        <li>
-                            <span class="name">{ &name }</span>{ ": " }
-                            { &temp }<button onclick={ read_temp }>{ "Read temp." }</button>
-                            <button onclick={ identify }>{ "Identify" }</button>
-                            <button onclick={ idle_dark }>{ "Idle dark" }</button>
-                            <button onclick={ idle_bright }>{ "Idle bright" }</button>
-                        </li>
-                    }
-                }) }
-                </ul> },
+            { for p.active_connections().map(|(id, name)| {
+                let name = name.unwrap_or("(unnamed)");
+                let temp = p.latest_temperature(id)
+                    .map(|t| format!("{t} °C"))
+                    .unwrap_or_else(|| "temperature unknown".to_string());
+                let read_temp = link.callback({let id = id.to_string(); move |_| ReadTemperature(id.clone())});
+                let identify = link.callback({let id = id.to_string(); move |_| Identify(id.clone())});
+                let idle_dark = link.callback({let id = id.to_string(); move |_| SetIdle(id.clone(), 0)});
+                let idle_bright = link.callback({let id = id.to_string(); move |_| SetIdle(id.clone(), 4)});
+                html! {
+                    <li>
+                        <span class="name">{ &name }</span>{ ": " }
+                        { &temp }<button onclick={ read_temp }>{ "Read temp." }</button>
+                        <button onclick={ identify }>{ "Identify" }</button>
+                        <button onclick={ idle_dark }>{ "Idle dark" }</button>
+                        <button onclick={ idle_bright }>{ "Idle bright" }</button>
+                    </li>
+                }
+            }) }
+            </ul> },
             None => html! { <p>{ "Bluetooth not available in this browser" }</p> },
         };
 
@@ -211,8 +220,7 @@ impl Component for Model {
 pub fn main() {
     std::panic::set_hook(Box::new(console_error_panic_hook::hook));
 
-    console_log::init_with_level(log::Level::Debug)
-        .expect("Console not available for logging");
+    console_log::init_with_level(log::Level::Debug).expect("Console not available for logging");
 
     yew::start_app::<Model>();
 
@@ -225,7 +233,7 @@ pub fn main() {
 pub fn do_oscore_test() -> Result<(), &'static str> {
     use core::mem::MaybeUninit;
 
-    use coap_message::{ReadableMessage, MinimalWritableMessage, MessageOption};
+    use coap_message::{MessageOption, MinimalWritableMessage, ReadableMessage};
 
     use liboscore::raw;
 
@@ -238,8 +246,8 @@ pub fn do_oscore_test() -> Result<(), &'static str> {
         liboscore::AeadAlg::from_number(24).unwrap(),
         b"\x01",
         b"",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     let mut primitive = liboscore::PrimitiveContext::new_from_fresh_material(immutables);
 
@@ -254,7 +262,13 @@ pub fn do_oscore_test() -> Result<(), &'static str> {
 
             let mut unprotected = MaybeUninit::uninit();
             let mut request_id = MaybeUninit::uninit();
-            let ret = raw::oscore_unprotect_request(msg, unprotected.as_mut_ptr(), &header.into_inner(), primitive.as_mut(), request_id.as_mut_ptr());
+            let ret = raw::oscore_unprotect_request(
+                msg,
+                unprotected.as_mut_ptr(),
+                &header.into_inner(),
+                primitive.as_mut(),
+                request_id.as_mut_ptr(),
+            );
             assert!(ret == raw::oscore_unprotect_request_result_OSCORE_UNPROTECT_REQUEST_OK);
             let unprotected = unprotected.assume_init();
 
@@ -262,13 +276,21 @@ pub fn do_oscore_test() -> Result<(), &'static str> {
             assert!(unprotected.code() == 1);
 
             let mut message_options = unprotected.options().fuse();
-            let mut ref_options = [(11, "oscore"), (11, "hello"), (11, "1")].into_iter().fuse();
+            let mut ref_options = [(11, "oscore"), (11, "hello"), (11, "1")]
+                .into_iter()
+                .fuse();
             for (msg_o, ref_o) in (&mut message_options).zip(&mut ref_options) {
                 assert!(msg_o.number() == ref_o.0);
                 assert!(msg_o.value() == ref_o.1.as_bytes());
             }
-            assert!(message_options.next().is_none(), "Message contained extra options");
-            assert!(ref_options.next().is_none(), "Message didn't contain the reference options");
+            assert!(
+                message_options.next().is_none(),
+                "Message contained extra options"
+            );
+            assert!(
+                ref_options.next().is_none(),
+                "Message didn't contain the reference options"
+            );
             assert!(unprotected.payload() == b"");
         };
     });

@@ -15,8 +15,6 @@
 const UUID_US: &'static str = "8df804b7-3300-496d-9dfa-f8fb40a236bc";
 const UUID_UC: &'static str = "2a58fc3f-3c62-4ecc-8167-d66d4d9410c2";
 
-
-
 /// Helper trait to run `Into<JsFuture>` in a chained style
 trait PromiseExt {
     fn js2rs(self) -> wasm_bindgen_futures::JsFuture;
@@ -88,12 +86,14 @@ impl BlePool {
     ///
     /// On success, along with the pool, a receiver is passed: Keep receiving messages from there,
     /// and pass them in through the notify function.
-    pub fn new() -> Result<(Self, futures::channel::mpsc::Receiver<BackToFrontMessage>), NoWebBluetoothSupport> {
-        let navigator = web_sys::window().expect("This is running inside a web browser")
+    pub fn new(
+    ) -> Result<(Self, futures::channel::mpsc::Receiver<BackToFrontMessage>), NoWebBluetoothSupport>
+    {
+        let navigator = web_sys::window()
+            .expect("This is running inside a web browser")
             .navigator();
 
-        let bluetooth = navigator.bluetooth()
-            .ok_or(NoWebBluetoothSupport)?;
+        let bluetooth = navigator.bluetooth().ok_or(NoWebBluetoothSupport)?;
 
         // This can overflow; ideally, the front-end will disable its buttons while full
         let front2back = futures::channel::mpsc::channel(1);
@@ -101,12 +101,13 @@ impl BlePool {
         let back2front = futures::channel::mpsc::channel(1);
 
         wasm_bindgen_futures::spawn_local(BlePoolBackend::run(
-                bluetooth,
-                front2back.1,
-                back2front.0,
-                ));
+            bluetooth,
+            front2back.1,
+            back2front.0,
+        ));
 
-        Ok((BlePool {
+        Ok((
+            BlePool {
                 front2back: front2back.0,
                 most_recent_connections: Default::default(),
                 most_recent_temperatures: Default::default(),
@@ -135,8 +136,10 @@ impl BlePool {
         self.most_recent_temperatures.get(device).copied()
     }
 
-    pub fn active_connections(&self) -> impl Iterator<Item=(&str, Option<&str>)> {
-        self.most_recent_connections.iter().map(|(i, n)| (i.as_ref(), n.as_ref().map(|n| n.as_ref())))
+    pub fn active_connections(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
+        self.most_recent_connections
+            .iter()
+            .map(|(i, n)| (i.as_ref(), n.as_ref().map(|n| n.as_ref())))
     }
 
     /// Request an action asynchronously from the backend.
@@ -167,56 +170,70 @@ impl BlePool {
 impl BlePoolBackend {
     // In a sense it's suboptimal for this be blocked on by .run(), but it makes general state
     // handling easier; could be revisited, though.
-    async fn try_connect(&mut self, bluetooth: &web_sys::Bluetooth) -> Result<DeviceId, &'static str> {
-        use web_sys::{RequestDeviceOptions, BluetoothLeScanFilterInit, BluetoothRemoteGattServer, BluetoothRemoteGattService, BluetoothRemoteGattCharacteristic};
+    async fn try_connect(
+        &mut self,
+        bluetooth: &web_sys::Bluetooth,
+    ) -> Result<DeviceId, &'static str> {
+        use web_sys::{
+            BluetoothLeScanFilterInit, BluetoothRemoteGattCharacteristic,
+            BluetoothRemoteGattServer, BluetoothRemoteGattService, RequestDeviceOptions,
+        };
 
-        let device = wasm_bindgen_futures::JsFuture::from(bluetooth
-            .request_device(
+        let device = wasm_bindgen_futures::JsFuture::from(
+            bluetooth.request_device(
                 RequestDeviceOptions::new().filters(
                     &[BluetoothLeScanFilterInit::new().services(
-                        &[wasm_bindgen::JsValue::from(UUID_US)].iter().collect::<js_sys::Array>())
-                    ].iter().collect::<js_sys::Array>()
-            ))
-            ).await
-            .map_err(|_| "No device actually selected")?;
+                        &[wasm_bindgen::JsValue::from(UUID_US)]
+                            .iter()
+                            .collect::<js_sys::Array>(),
+                    )]
+                    .iter()
+                    .collect::<js_sys::Array>(),
+                ),
+            ),
+        )
+        .await
+        .map_err(|_| "No device actually selected")?;
 
         let device: web_sys::BluetoothDevice = device.into();
         log::info!("New device: {:?}, {:?}...", device.id(), device.name());
 
         // FIXME: do all the "device goes away" stuff properly (but right now we don't need it for
         // the essential demo)
-//         let changed = |evt: web_sys::Event| { log::info!("Event: {:?}", evt); };
-//         let changed = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(changed);
-//         let changed = Box::new(changed);
-//         // FIXME CONTINUE HERE: Things work fine as long as that closure is kept around, we'll just
-//         // make that box (probably doesn't even need boxing, given nobody asks for pinning here)
-//         // part of our "connection".
-//         let changed = Box::leak(changed);
-//         use wasm_bindgen::JsCast;
-//         device.set_ongattserverdisconnected(Some(changed.as_ref().unchecked_ref()));
+        //         let changed = |evt: web_sys::Event| { log::info!("Event: {:?}", evt); };
+        //         let changed = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(changed);
+        //         let changed = Box::new(changed);
+        //         // FIXME CONTINUE HERE: Things work fine as long as that closure is kept around, we'll just
+        //         // make that box (probably doesn't even need boxing, given nobody asks for pinning here)
+        //         // part of our "connection".
+        //         let changed = Box::leak(changed);
+        //         use wasm_bindgen::JsCast;
+        //         device.set_ongattserverdisconnected(Some(changed.as_ref().unchecked_ref()));
 
-        let server: BluetoothRemoteGattServer = device.gatt()
+        let server: BluetoothRemoteGattServer = device
+            .gatt()
             .ok_or("No GATT found on device")?
             .connect()
-            .js2rs().await
+            .js2rs()
+            .await
             .map_err(|_| "Failed to connect to GATT")?
             .into();
 
         let service: BluetoothRemoteGattService = server
             .get_primary_service_with_str(UUID_US)
-            .js2rs().await
+            .js2rs()
+            .await
             .map_err(|_| "No CoAP service")?
             .into();
 
         let mut characteristic: BluetoothRemoteGattCharacteristic = service
             .get_characteristic_with_str(UUID_UC)
-            .js2rs().await
+            .js2rs()
+            .await
             .map_err(|_| "No CoAP service")?
             .into();
 
-        if let Ok(c) = characteristic
-            .start_notifications()
-            .js2rs().await {
+        if let Ok(c) = characteristic.start_notifications().js2rs().await {
             characteristic = c.into();
         } else {
             // FIXME: A more elaborate GATT client implementation might keep notifications off as
@@ -228,10 +245,13 @@ impl BlePoolBackend {
 
         let id = device.id();
 
-        self.connections.insert(id.clone(), BleConnection {
-            characteristic,
-            name: device.name(),
-        });
+        self.connections.insert(
+            id.clone(),
+            BleConnection {
+                characteristic,
+                name: device.name(),
+            },
+        );
 
         Ok(id)
     }
@@ -246,7 +266,8 @@ impl BlePoolBackend {
     }
 
     async fn notify_device_list(&mut self) {
-        let new_list = self.connections
+        let new_list = self
+            .connections
             .iter()
             .map(|(id, con)| (id.clone(), con.name.as_ref().map(|n| n.clone())))
             .collect();
@@ -258,8 +279,7 @@ impl BlePoolBackend {
         bluetooth: web_sys::Bluetooth,
         front2back: futures::channel::mpsc::Receiver<FrontToBackMessage>,
         back2front: futures::channel::mpsc::Sender<BackToFrontMessage>,
-        ) {
-
+    ) {
         let mut self_ = Self {
             front2back,
             back2front,
@@ -271,15 +291,15 @@ impl BlePoolBackend {
             use futures::stream::StreamExt;
             let message = self_.front2back.next().await;
 
-            match message
-            {
+            match message {
                 Some(FindAnyDevice) => {
                     match self_.try_connect(&bluetooth).await {
                         Ok(id) => {
                             self_.notify_device_list().await;
                             self_.write_time(&id).await;
 
-                            let token_response = hex_literal::hex!("
+                            let token_response = hex_literal::hex!(
+                                "
 a2 01 58 65 d0 83 44 a1  01 18 1f a1 05 4d 67 d8
 13 d2 cd bc 28 59 f0 c2  e9 f3 30 58 4c f3 0b 8f
 55 a8 af 8d 1d d2 0d c0  db 44 68 50 e6 45 39 39
@@ -289,14 +309,17 @@ e7 18 a3 72 ef 4c 4f b9  a6 7e f2 d2 40 26 02 34
 10 dc 17 20 d0 23 64 d5  0b 08 a1 04 a4 00 41 02
 02 50 a4 ac 59 1b d4 1c  d6 21 ef a7 92 53 6a 4e
 e5 e0 05 41 8c 06 41 02
-");
+"
+                            );
                             use dcaf::ToCborMap;
-                            let token_response = dcaf::AccessTokenResponse::deserialize_from(token_response.as_slice())
-                                .unwrap();
+                            let token_response = dcaf::AccessTokenResponse::deserialize_from(
+                                token_response.as_slice(),
+                            )
+                            .unwrap();
                             dbg!(&token_response);
                             let material = match token_response.cnf {
                                 Some(dcaf::ProofOfPossessionKey::OscoreInputMaterial(mat)) => mat,
-                                _ => panic!("Token response was not for ACE OSCORE profile")
+                                _ => panic!("Token response was not for ACE OSCORE profile"),
                             };
 
                             let token = token_response.access_token;
@@ -309,7 +332,10 @@ e5 e0 05 41 8c 06 41 02
                             let client_recipient_id = b"1234";
                             log::warn!("My recipient ID is {:?}", client_recipient_id);
 
-                            match self_.write_authzinfo(&id, nonce1, client_recipient_id, &token).await {
+                            match self_
+                                .write_authzinfo(&id, nonce1, client_recipient_id, &token)
+                                .await
+                            {
                                 Ok((nonce2, server_recipient_id)) => {
                                     log::info!("Should derive using {nonce2:?} and {server_recipient_id:?}");
 
@@ -319,22 +345,30 @@ e5 e0 05 41 8c 06 41 02
                                         &nonce2,
                                         &server_recipient_id,
                                         client_recipient_id,
-                                        ).unwrap();
+                                    )
+                                    .unwrap();
 
-                                    log::info!("Derived context {:?} now to be used with {:?}", &context, &id);
+                                    log::info!(
+                                        "Derived context {:?} now to be used with {:?}",
+                                        &context,
+                                        &id
+                                    );
                                     self_.security_contexts.insert(id.clone(), context);
                                 }
                                 Err(e) => {
-                                    log::error!("Error occurred attempting to send a token: {:?}", e);
+                                    log::error!(
+                                        "Error occurred attempting to send a token: {:?}",
+                                        e
+                                    );
                                 }
                             }
-                        },
+                        }
                         Err(e) => {
                             log::error!("Could not connect: {e}");
                             continue;
                         }
                     };
-                },
+                }
                 Some(ReadTemperature(id)) => {
                     let temp = self_.read_temperature(&id).await;
                     self_.notify(ReceivedTemperature(id, temp.ok())).await;
@@ -346,7 +380,7 @@ e5 e0 05 41 8c 06 41 02
                     self_.set_idle(&id, level).await;
                 }
                 // Whatever spawned us doesn't want us any more
-                None => break
+                None => break,
             }
         }
     }
@@ -362,13 +396,17 @@ e5 e0 05 41 8c 06 41 02
         let connection = &self.connections[id];
 
         let mut carry = None;
-        let mut request = coap_gatt_utils::write::<400>(|msg| {carry = Some(write_request(msg));});
+        let mut request = coap_gatt_utils::write::<400>(|msg| {
+            carry = Some(write_request(msg));
+        });
         // FIXME: Maybe change coap_gatt_utils so this nees less patching?
         let carry = carry.expect("write always invokes the writer");
 
         log::debug!("Writing to charcteristic with length {}", request.len());
-        
-        connection.characteristic.write_value_with_u8_array(&mut request)
+
+        connection
+            .characteristic
+            .write_value_with_u8_array(&mut request)
             .js2rs()
             .await
             // FIXME: How can we do better here? Can this be discovered in advance, and then made
@@ -376,7 +414,9 @@ e5 e0 05 41 8c 06 41 02
             .expect("Request exceeds length the device can accept");
 
         let mut response = loop {
-            let response: js_sys::DataView = connection.characteristic.read_value()
+            let response: js_sys::DataView = connection
+                .characteristic
+                .read_value()
                 .js2rs()
                 .await
                 .unwrap()
@@ -392,8 +432,7 @@ e5 e0 05 41 8c 06 41 02
             log::info!("Read was zero-length, trying again...");
         };
 
-        let mut coap_response = coap_gatt_utils::parse_mut(&mut response)
-            .unwrap();
+        let mut coap_response = coap_gatt_utils::parse_mut(&mut response).unwrap();
 
         read_response(&mut coap_response, carry)
     }
@@ -408,49 +447,48 @@ e5 e0 05 41 8c 06 41 02
         // sub-optimal, but a) a practical simplification for tossing it around between to
         // closures, and b) kind of a consequence of PrimitiveContext only being usable &mut rather
         // than being usable through the more elaborate means provided by liboscore.
-        let mut ctx = self.security_contexts.remove(id)
-            .unwrap();
+        let mut ctx = self.security_contexts.remove(id).unwrap();
 
-        let (ctx, user_response) = self.send_request(
-            id,
-            |request| {
-                let (correlation, user_carry) = liboscore::protect_request(
-                    request,
-                    &mut ctx,
-                    |request| {
-                        write_request(request)
+        let (ctx, user_response) = self
+            .send_request(
+                id,
+                |request| {
+                    let (correlation, user_carry) =
+                        liboscore::protect_request(request, &mut ctx, |request| {
+                            write_request(request)
+                        });
+                    (correlation, ctx, user_carry)
+                },
+                |response, (mut correlation, mut ctx, user_carry)| {
+                    use coap_message::{MessageOption, ReadableMessage};
+                    // FIXME: We need to copy things out because ReadableMessage by design only hands out
+                    // short-lived values (so they can be built in the iterator if need be). On the
+                    // plus side, this means that we're not running into the lifetime trouble one'd
+                    // expect when passing unprotect_response both a mutable message *and* an option
+                    // that references data inside it.
+                    let mut oscore_option: Option<Vec<u8>> = None;
+                    for o in response.options() {
+                        if o.number() == coap_numbers::option::OSCORE {
+                            oscore_option = Some(o.value().into());
+                            break;
+                        }
                     }
-                );
-                (correlation, ctx, user_carry)
-            },
-            |response, (mut correlation, mut ctx, user_carry)| {
-                use coap_message::{MessageOption, ReadableMessage};
-                // FIXME: We need to copy things out because ReadableMessage by design only hands out
-                // short-lived values (so they can be built in the iterator if need be). On the
-                // plus side, this means that we're not running into the lifetime trouble one'd
-                // expect when passing unprotect_response both a mutable message *and* an option
-                // that references data inside it.
-                let mut oscore_option: Option<Vec<u8>> = None;
-                for o in response.options() {
-                    if o.number() == coap_numbers::option::OSCORE {
-                        oscore_option = Some(o.value().into());
-                        break;
-                    }
-                }
-                let oscore_option = liboscore::OscoreOption::parse(
-                        oscore_option.as_ref().expect("No OSCORE option") // FIXME error handling
+                    let oscore_option = liboscore::OscoreOption::parse(
+                        oscore_option.as_ref().expect("No OSCORE option"), // FIXME error handling
                     )
                     .expect("Unparsable OSCORE option");
 
-                let user_response = liboscore::unprotect_response(
-                    response,
-                    &mut ctx,
-                    oscore_option,
-                    &mut correlation,
-                    |response| read_response(response, user_carry),
-                );
-                (ctx, user_response)
-            }).await;
+                    let user_response = liboscore::unprotect_response(
+                        response,
+                        &mut ctx,
+                        oscore_option,
+                        &mut correlation,
+                        |response| read_response(response, user_carry),
+                    );
+                    (ctx, user_response)
+                },
+            )
+            .await;
 
         self.security_contexts.insert(id.to_string(), ctx);
 
@@ -458,79 +496,94 @@ e5 e0 05 41 8c 06 41 02
     }
 
     async fn write_time(&mut self, id: &str) {
-        let time_now: u32 = instant::SystemTime::now().duration_since(instant::SystemTime::UNIX_EPOCH).unwrap().as_secs().try_into().expect("Code not used beyond 2076");
+        let time_now: u32 = instant::SystemTime::now()
+            .duration_since(instant::SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .try_into()
+            .expect("Code not used beyond 2076");
         // This would be moderately smoother if a WindowedInfinityWithETag writer could ve
         // constructed easily for a message when we don't expect blockwising and are in a request
         let mut time_now_buffer = Vec::with_capacity(5);
         ciborium::ser::into_writer(&time_now, &mut time_now_buffer).expect("Time can be encoded");
-        self.send_request(id,
-                     |request| {
-                        use coap_message::MinimalWritableMessage;
-                        request.set_code(coap_numbers::code::PUT.try_into().unwrap());
-                        request.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"time");
-                        request.set_payload(&time_now_buffer);
-                     },
-                     |response, ()| {
-                        use coap_message::ReadableMessage;
-                        log::info!("Time written, code {:?}", response.code());
-                     }).await;
+        self.send_request(
+            id,
+            |request| {
+                use coap_message::MinimalWritableMessage;
+                request.set_code(coap_numbers::code::PUT.try_into().unwrap());
+                request.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"time");
+                request.set_payload(&time_now_buffer);
+            },
+            |response, ()| {
+                use coap_message::ReadableMessage;
+                log::info!("Time written, code {:?}", response.code());
+            },
+        )
+        .await;
     }
 
     async fn read_temperature(&mut self, id: &str) -> Result<f32, &'static str> {
-        self.send_request_protected(&id,
-             |request| {
+        self.send_request_protected(
+            &id,
+            |request| {
                 use coap_message::MinimalWritableMessage;
                 request.set_code(coap_numbers::code::GET.try_into().unwrap());
                 request.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"temp");
                 request.set_payload(&[]);
-             },
-             |response, ()| {
+            },
+            |response, ()| {
                 use coap_message::ReadableMessage;
                 if u8::from(response.code()) != coap_numbers::code::CONTENT {
                     Err("Unsuccessful request")
                 } else {
                     Ok(ciborium::de::from_reader(response.payload()))
                 }
-             }).await?
-           .map_err(|_| "CBOR parsing error")
-           .and_then(|v: ciborium::value::Value| {
-               // Copied from my coap-handler demos
-               //
-               // See also https://github.com/enarx/ciborium/issues/21
-               use ciborium::value::Value::{Tag, Array, Integer};
-               match v {
-                   Tag(5, b) => {
-                       match b.as_ref() {
-                           Array(v) => match v.as_slice() {
-                               [Integer(v1), Integer(v2)] => {
-                                   let exponent = i32::try_from(*v1)
-                                       .map_err(|_| "Exponent exceeds i32 range")?;
-                                   let mantissa = i32::try_from(*v2)
-                                       .map_err(|_| "Mantissa exceeds i32 range")?
-                                        as f32;
-                                   Ok((2.0f32).powi(exponent) * mantissa)
-                               },
-                               _ => Err("Bigfloat tags array of wrong length"),
-                           }
-                           _ => Err("Bigfloat should tag array"),
-                       }
-                   }
-                   _ => Err("Parsed but not a bigfloat"),
-               }
-           })
+            },
+        )
+        .await?
+        .map_err(|_| "CBOR parsing error")
+        .and_then(|v: ciborium::value::Value| {
+            // Copied from my coap-handler demos
+            //
+            // See also https://github.com/enarx/ciborium/issues/21
+            use ciborium::value::Value::{Array, Integer, Tag};
+            match v {
+                Tag(5, b) => match b.as_ref() {
+                    Array(v) => match v.as_slice() {
+                        [Integer(v1), Integer(v2)] => {
+                            let exponent =
+                                i32::try_from(*v1).map_err(|_| "Exponent exceeds i32 range")?;
+                            let mantissa = i32::try_from(*v2)
+                                .map_err(|_| "Mantissa exceeds i32 range")?
+                                as f32;
+                            Ok((2.0f32).powi(exponent) * mantissa)
+                        }
+                        _ => Err("Bigfloat tags array of wrong length"),
+                    },
+                    _ => Err("Bigfloat should tag array"),
+                },
+                _ => Err("Parsed but not a bigfloat"),
+            }
+        })
     }
 
     async fn identify(&mut self, id: &str) {
         // No error handling because this resource returns success anyway (and the success is
         // indicated remotely)
-        self.send_request_protected(&id,
-             |request| {
+        self.send_request_protected(
+            &id,
+            |request| {
                 use coap_message::MinimalWritableMessage;
                 request.set_code(coap_numbers::code::POST.try_into().unwrap());
-                request.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"identify");
+                request.add_option(
+                    coap_numbers::option::URI_PATH.try_into().unwrap(),
+                    b"identify",
+                );
                 request.set_payload(&[]);
-             },
-             |_, ()| {}).await
+            },
+            |_, ()| {},
+        )
+        .await
     }
 
     async fn set_idle(&mut self, id: &str, level: u8) {
@@ -540,14 +593,17 @@ e5 e0 05 41 8c 06 41 02
         ciborium::ser::into_writer(&level, &mut level_buffer).expect("Level can be encoded");
         // No error handling because this resource returns success anyway (and the success is
         // indicated remotely)
-        self.send_request_protected(&id,
-             |request| {
+        self.send_request_protected(
+            &id,
+            |request| {
                 use coap_message::MinimalWritableMessage;
                 request.set_code(coap_numbers::code::PUT.try_into().unwrap());
                 request.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"leds");
                 request.set_payload(&level_buffer);
-             },
-             |_, ()| {}).await
+            },
+            |_, ()| {},
+        )
+        .await
     }
 
     // FIXME actually token plus local nonce1 and id1
@@ -555,47 +611,68 @@ e5 e0 05 41 8c 06 41 02
     /// the given `nonce` and `id1` (client recipient ID).
     ///
     /// Returns `(nonce2, id2)` on success, where the latter is the server's chosen recipient ID.
-    async fn write_authzinfo(&mut self, id: &str, nonce1: &[u8], id1: &[u8], token: &[u8]) -> Result<(Vec<u8>, Vec<u8>), &'static str> {
+    async fn write_authzinfo(
+        &mut self,
+        id: &str,
+        nonce1: &[u8],
+        id1: &[u8],
+        token: &[u8],
+    ) -> Result<(Vec<u8>, Vec<u8>), &'static str> {
         use ciborium_ll::{Encoder, Header};
         let mut payload = Vec::with_capacity(token.len() + 15);
         let mut encoder = Encoder::from(&mut payload);
 
         encoder.push(Header::Map(Some(3))).unwrap();
-        encoder.push(Header::Positive(ace_oscore_helpers::ACCESS_TOKEN)).unwrap();
+        encoder
+            .push(Header::Positive(ace_oscore_helpers::ACCESS_TOKEN))
+            .unwrap();
         encoder.bytes(&token, None).unwrap();
-        encoder.push(Header::Positive(ace_oscore_helpers::NONCE1)).unwrap();
+        encoder
+            .push(Header::Positive(ace_oscore_helpers::NONCE1))
+            .unwrap();
         encoder.bytes(nonce1, None).unwrap();
-        encoder.push(Header::Positive(ace_oscore_helpers::ACE_CLIENT_RECIPIENTID)).unwrap();
+        encoder
+            .push(Header::Positive(ace_oscore_helpers::ACE_CLIENT_RECIPIENTID))
+            .unwrap();
         encoder.bytes(id1, None).unwrap();
 
-        self.send_request(id,
-                |request| {
-                   use coap_message::MinimalWritableMessage;
-                   request.set_code(coap_numbers::code::POST.try_into().unwrap());
-                   request.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"authz-info");
-                   request.set_payload(&payload);
-                },
-                |response, ()| {
-                    use coap_message::ReadableMessage;
-                    if response.code() == coap_numbers::code::CHANGED {
-                        let response = response.payload();
-                        extern crate alloc;
-                        let mut response: alloc::collections::BTreeMap<u64, serde_bytes::ByteBuf> = ciborium::de::from_reader(response)
+        self.send_request(
+            id,
+            |request| {
+                use coap_message::MinimalWritableMessage;
+                request.set_code(coap_numbers::code::POST.try_into().unwrap());
+                request.add_option(
+                    coap_numbers::option::URI_PATH.try_into().unwrap(),
+                    b"authz-info",
+                );
+                request.set_payload(&payload);
+            },
+            |response, ()| {
+                use coap_message::ReadableMessage;
+                if response.code() == coap_numbers::code::CHANGED {
+                    let response = response.payload();
+                    extern crate alloc;
+                    let mut response: alloc::collections::BTreeMap<u64, serde_bytes::ByteBuf> =
+                        ciborium::de::from_reader(response)
                             .map_err(|_| "Wrong response structure")?;
-                        let nonce2 = response.remove(&ace_oscore_helpers::NONCE2)
-                            .ok_or("Nonce2 missing")?;
-                        let server_recipient_id = response.remove(&ace_oscore_helpers::ACE_SERVER_RECIPIENTID)
-                            .ok_or("Server recipient ID missing")?;
-                        if !response.is_empty() {
-                            return Err("Left-over elements");
-                        }
-
-                        log::info!("authz-info response {:?}", response);
-
-                        Ok((nonce2.into_vec(), server_recipient_id.into_vec()))
-                    } else {
-                        Err("Unsuccessful code")
+                    let nonce2 = response
+                        .remove(&ace_oscore_helpers::NONCE2)
+                        .ok_or("Nonce2 missing")?;
+                    let server_recipient_id = response
+                        .remove(&ace_oscore_helpers::ACE_SERVER_RECIPIENTID)
+                        .ok_or("Server recipient ID missing")?;
+                    if !response.is_empty() {
+                        return Err("Left-over elements");
                     }
-                 }).await
+
+                    log::info!("authz-info response {:?}", response);
+
+                    Ok((nonce2.into_vec(), server_recipient_id.into_vec()))
+                } else {
+                    Err("Unsuccessful code")
+                }
+            },
+        )
+        .await
     }
 }
