@@ -1,7 +1,8 @@
 pages:
-  image: rustdocker/rust:nightly
+  image: docker.io/rustdocker/rust:nightly
   script:
     - rustup target add wasm32-unknown-unknown
+    - apt-get update && apt-get install -y libclang-dev
     - cargo install wasm-bindgen-cli
     - RUSTFLAGS=--cfg=web_sys_unstable_apis cargo build --target wasm32-unknown-unknown --release
     - wasm-bindgen target/wasm32-unknown-unknown/release/coap-ace-poc-webapp.wasm --out-dir public/ --web
