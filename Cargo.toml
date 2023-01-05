@@ -20,6 +20,7 @@ js-sys = "^0.3.60"
 web-sys = { version = "^0.3.60", features = [ "Navigator" , "Bluetooth", "RequestDeviceOptions", "BluetoothDevice", "BluetoothRemoteGattServer", "BluetoothRemoteGattService", "BluetoothRemoteGattCharacteristic", "BluetoothLeScanFilterInit", "BluetoothCharacteristicProperties"] }
 instant = { version = "0.1.12", features = [ "wasm-bindgen" ] }
 dcaf = { version = "0.3.1", default-features = false }
+url = "2"
 
 hex-literal = "*"
 
@@ -37,7 +38,9 @@ liboscore = { git = "https://gitlab.com/oscore/liboscore/", branch = "rust-backe
 liboscore-msgbackend = { git = "https://gitlab.com/oscore/liboscore/", branch = "rust-backends", features = [ "alloc" ] }
 # only to enable the feature
 # liboscore-cryptobackend = { git = "https://gitlab.com/oscore/liboscore/", branch = "rust-backends", features = [ "log_cryptographic_operations_including_secret_keys" ] }
-ace-oscore-helpers = { git = "https://gitlab.com/oscore/ace-oscore-helpers/", features = [ "liboscore" ] }
+ace-oscore-helpers = { git = "https://gitlab.com/oscore/ace-oscore-helpers/", features = [ "liboscore", "alloc" ] }
+coset = "0.3.3"
+
 rand = "0.8.5"
 # to enable the right backend for rand
 getrandom = { version = "0.2", features = [ "js" ] }

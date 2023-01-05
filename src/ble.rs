@@ -27,6 +27,17 @@ impl PromiseExt for js_sys::Promise {
 }
 
 type DeviceId = String;
+type RequestCreationHints =
+    ace_oscore_helpers::request_creation_hints::RequestCreationHints<String>;
+
+#[derive(Debug)]
+pub struct DeviceDetails {
+    pub id: DeviceId,
+    pub name: Option<String>,
+    pub rs_identity: Option<RequestCreationHints>,
+    pub login_uri: Option<String>,
+    pub oscore_established: bool,
+}
 
 #[derive(Debug)]
 pub enum FrontToBackMessage {
@@ -46,7 +57,7 @@ pub enum BackToFrontMessage {
     /// The list of devices has changed
     ///
     /// (Alternatively, this could be expressed in a series of removals and and additions)
-    UpdateDeviceList(Vec<(DeviceId, Option<String>)>),
+    UpdateDeviceList(Vec<DeviceDetails>),
     /// A temperature reading was obtained from a device
     ReceivedTemperature(DeviceId, Option<f32>),
 }
@@ -61,7 +72,7 @@ use BackToFrontMessage::*;
 /// available all the time.
 pub struct BlePool {
     front2back: futures::channel::mpsc::Sender<FrontToBackMessage>,
-    most_recent_connections: Vec<(DeviceId, Option<String>)>,
+    most_recent_connections: Vec<DeviceDetails>,
     most_recent_temperatures: std::collections::HashMap<DeviceId, f32>,
 }
 
@@ -72,7 +83,15 @@ pub struct NoWebBluetoothSupport;
 struct BlePoolBackend {
     front2back: futures::channel::mpsc::Receiver<FrontToBackMessage>,
     back2front: futures::channel::mpsc::Sender<BackToFrontMessage>,
+    /// BLE connections
     connections: std::collections::HashMap<DeviceId, BleConnection>,
+    /// Most recent request creation hint obtained from the device with the given ID
+    rs_identities: std::collections::HashMap<DeviceId, RequestCreationHints>,
+    /// Login URIs that we were redirected to
+    login_uris: std::collections::HashMap<String, String>,
+    /// Tokens requested from the AS
+    tokens: std::collections::HashMap<RequestCreationHints, dcaf::AccessTokenResponse>,
+    /// Established security contexts
     security_contexts: std::collections::HashMap<String, liboscore::PrimitiveContext>,
 }
 
@@ -136,10 +155,8 @@ impl BlePool {
         self.most_recent_temperatures.get(device).copied()
     }
 
-    pub fn active_connections(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
-        self.most_recent_connections
-            .iter()
-            .map(|(i, n)| (i.as_ref(), n.as_ref().map(|n| n.as_ref())))
+    pub fn active_connections(&self) -> impl Iterator<Item = &DeviceDetails> {
+        self.most_recent_connections.iter()
     }
 
     /// Request an action asynchronously from the backend.
@@ -269,7 +286,18 @@ impl BlePoolBackend {
         let new_list = self
             .connections
             .iter()
-            .map(|(id, con)| (id.clone(), con.name.as_ref().map(|n| n.clone())))
+            .map(|(id, con)| {
+                let rs_identity = self.rs_identities.get(id);
+                DeviceDetails {
+                    id: id.clone(),
+                    name: con.name.as_ref().map(|n| n.clone()),
+                    rs_identity: rs_identity.cloned(),
+                    login_uri: rs_identity
+                        .map(|i| &i.as_uri)
+                        .and_then(|u| self.login_uris.get(u).map(|login| login.to_owned())),
+                    oscore_established: self.security_contexts.contains_key(id),
+                }
+            })
             .collect();
 
         self.notify(UpdateDeviceList(new_list)).await;
@@ -284,6 +312,9 @@ impl BlePoolBackend {
             front2back,
             back2front,
             connections: Default::default(),
+            rs_identities: Default::default(),
+            login_uris: Default::default(),
+            tokens: Default::default(),
             security_contexts: Default::default(),
         };
 
@@ -298,70 +329,11 @@ impl BlePoolBackend {
                             self_.notify_device_list().await;
                             self_.write_time(&id).await;
 
-                            let token_response = hex_literal::hex!(
-                                "
-a2 01 58 65 d0 83 44 a1  01 18 1f a1 05 4d 67 d8
-13 d2 cd bc 28 59 f0 c2  e9 f3 30 58 4c f3 0b 8f
-55 a8 af 8d 1d d2 0d c0  db 44 68 50 e6 45 39 39
-6b 0f ac fd 8b ea ef fd  9b 03 93 98 6e f9 d2 f8
-e7 18 a3 72 ef 4c 4f b9  a6 7e f2 d2 40 26 02 34
-5a 76 71 d4 23 08 5f f3  14 48 5a 8a f1 fd e4 1f
-10 dc 17 20 d0 23 64 d5  0b 08 a1 04 a4 00 41 02
-02 50 a4 ac 59 1b d4 1c  d6 21 ef a7 92 53 6a 4e
-e5 e0 05 41 8c 06 41 02
-"
-                            );
-                            use dcaf::ToCborMap;
-                            let token_response = dcaf::AccessTokenResponse::deserialize_from(
-                                token_response.as_slice(),
-                            )
-                            .unwrap();
-                            dbg!(&token_response);
-                            let material = match token_response.cnf {
-                                Some(dcaf::ProofOfPossessionKey::OscoreInputMaterial(mat)) => mat,
-                                _ => panic!("Token response was not for ACE OSCORE profile"),
-                            };
+                            self_.try_get_rqh(&id).await;
+                            self_.try_get_token(&id).await;
+                            self_.try_establish_security_context(&id).await;
 
-                            let token = token_response.access_token;
-
-                            // "The use of a 64-bit long random number is RECOMMENDED"
-                            let nonce1 = &rand::random::<[u8; 8]>();
-                            // Picking an arbitrary long one that's not even unique: We're only a
-                            // server with this peer, so this gets never sent, and we always know
-                            // from context when to use this one.
-                            let client_recipient_id = b"1234";
-                            log::warn!("My recipient ID is {:?}", client_recipient_id);
-
-                            match self_
-                                .write_authzinfo(&id, nonce1, client_recipient_id, &token)
-                                .await
-                            {
-                                Ok((nonce2, server_recipient_id)) => {
-                                    log::info!("Should derive using {nonce2:?} and {server_recipient_id:?}");
-
-                                    let context = ace_oscore_helpers::oscore_claims::derive(
-                                        material,
-                                        nonce1,
-                                        &nonce2,
-                                        &server_recipient_id,
-                                        client_recipient_id,
-                                    )
-                                    .unwrap();
-
-                                    log::info!(
-                                        "Derived context {:?} now to be used with {:?}",
-                                        &context,
-                                        &id
-                                    );
-                                    self_.security_contexts.insert(id.clone(), context);
-                                }
-                                Err(e) => {
-                                    log::error!(
-                                        "Error occurred attempting to send a token: {:?}",
-                                        e
-                                    );
-                                }
-                            }
+                            self_.notify_device_list().await;
                         }
                         Err(e) => {
                             log::error!("Could not connect: {e}");
@@ -442,12 +414,19 @@ e5 e0 05 41 8c 06 41 02
         id: &str,
         write_request: impl FnOnce(&mut liboscore::ProtectedMessage) -> CARRY,
         read_response: impl FnOnce(&liboscore::ProtectedMessage, CARRY) -> R,
-    ) -> R {
+    ) -> Result<R, &'static str> {
+        self.try_get_rqh(id).await;
+        self.try_get_token(id).await;
+        self.try_establish_security_context(id).await;
+
         // While we process this, no other access to the context is possible. That's kind of
         // sub-optimal, but a) a practical simplification for tossing it around between to
         // closures, and b) kind of a consequence of PrimitiveContext only being usable &mut rather
         // than being usable through the more elaborate means provided by liboscore.
-        let mut ctx = self.security_contexts.remove(id).unwrap();
+        let mut ctx = self
+            .security_contexts
+            .remove(id)
+            .ok_or("No security context available")?;
 
         let (ctx, user_response) = self
             .send_request(
@@ -492,7 +471,7 @@ e5 e0 05 41 8c 06 41 02
 
         self.security_contexts.insert(id.to_string(), ctx);
 
-        user_response
+        Ok(user_response)
     }
 
     async fn write_time(&mut self, id: &str) {
@@ -522,6 +501,31 @@ e5 e0 05 41 8c 06 41 02
         .await;
     }
 
+    /// Try reading the temperature, but don't even try to do it through OSCORE
+    ///
+    /// This triggers a response that'll hopefully point us to the right AS and the RS's identity.
+    async fn prod_temperature(&mut self, id: &str) -> Result<RequestCreationHints, &'static str> {
+        self.send_request(
+            &id,
+            |request| {
+                use coap_message::MinimalWritableMessage;
+                request.set_code(coap_numbers::code::GET.try_into().unwrap());
+                request.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"temp");
+                request.set_payload(&[]);
+            },
+            |response, ()| {
+                use coap_message::ReadableMessage;
+
+                if u8::from(response.code()) != coap_numbers::code::UNAUTHORIZED {
+                    return Err("Unprotected temeprature read yielded odd code");
+                }
+
+                RequestCreationHints::parse_cbor(response.payload())
+            },
+        )
+        .await
+    }
+
     async fn read_temperature(&mut self, id: &str) -> Result<f32, &'static str> {
         self.send_request_protected(
             &id,
@@ -540,7 +544,7 @@ e5 e0 05 41 8c 06 41 02
                 }
             },
         )
-        .await?
+        .await??
         .map_err(|_| "CBOR parsing error")
         .and_then(|v: ciborium::value::Value| {
             // Copied from my coap-handler demos
@@ -583,7 +587,7 @@ e5 e0 05 41 8c 06 41 02
             },
             |_, ()| {},
         )
-        .await
+        .await;
     }
 
     async fn set_idle(&mut self, id: &str, level: u8) {
@@ -603,7 +607,7 @@ e5 e0 05 41 8c 06 41 02
             },
             |_, ()| {},
         )
-        .await
+        .await;
     }
 
     // FIXME actually token plus local nonce1 and id1
@@ -674,5 +678,210 @@ e5 e0 05 41 8c 06 41 02
             },
         )
         .await
+    }
+
+    /// Try to determine the audience value of a given peer.
+    async fn try_get_rqh(&mut self, id: &str) {
+        if self.rs_identities.get(id).is_some() {
+            // All is fine already
+            return;
+        }
+
+        let response = self.prod_temperature(&id).await;
+        if let Ok(rs_identity) = response {
+            // If we don't get any, it's probably game over here, but no
+            // reason to crash
+            self.rs_identities.insert(id.to_string(), rs_identity);
+            self.notify_device_list().await;
+        }
+    }
+
+    /// For a given token path, find any Authorization value we have available
+    ///
+    /// For this particular very stateless application, this is passed around in the URI
+    fn http_authorization_for(&self, token_uri: &str) -> Option<String> {
+        let hash = web_sys::window()
+            .expect("This is running inside a web browser")
+            .location()
+            .hash()
+            .unwrap();
+        for part in hash.split('#') {
+            if part.is_empty() {
+                continue;
+            }
+            match (|| {
+                let mut components = part.split(';');
+                let part_token_uri = components.next()?;
+                let part_authorization = components.next()?;
+
+                Some(if token_uri == part_token_uri {
+                    // FIXME: Do full escaping (but this precise handling is suitable only for the
+                    // demo anyway)
+                    Some(part_authorization.replace("%20", " "))
+                } else {
+                    None
+                })
+            })() {
+                Some(Some(token)) => return Some(token),
+                Some(None) => continue,
+                None => {
+                    log::warn!("Ignoring malformed fragment componet {:?}", part);
+                    continue;
+                }
+            }
+        }
+        None
+    }
+
+    /// Try to fetch a token from the AS for the audience the RS claimed to be
+    ///
+    /// Currently fails silently if there is no rs_identities entry.
+    async fn try_get_token(&mut self, id: &str) {
+        let Some(rqh) = self.rs_identities.get(id) else {
+            // Prerequisite missing, can't help it
+            return;
+        };
+        if self.tokens.contains_key(rqh) {
+            // All is fine already
+            return;
+        };
+
+        log::info!("Trying to get a token...");
+        use web_sys::{Request, RequestCredentials, RequestInit, RequestMode, Response};
+
+        let mut token_request = std::collections::HashMap::new();
+        token_request.insert(5u8, &rqh.audience);
+        let mut request_buffer = Vec::with_capacity(50);
+        ciborium::ser::into_writer(&token_request, &mut request_buffer)
+            .expect("Map can be encoded");
+        let body = js_sys::Uint8Array::from(request_buffer.as_slice());
+        let mut opts = RequestInit::new();
+        opts.method("POST")
+            .mode(RequestMode::Cors)
+            .credentials(RequestCredentials::Omit) // Third party cookies would be blocked
+            // anyway
+            .body(Some(&body));
+
+        let Ok(request) = Request::new_with_str_and_init(&rqh.as_uri, &opts) else { return };
+
+        if let Some(authvalue) = self.http_authorization_for(&rqh.as_uri) {
+            request.headers().set("Authorization", &authvalue).unwrap();
+        }
+
+        let window = web_sys::window().expect("Running in a browser");
+        let Ok(resp_value) = window.fetch_with_request(&request).js2rs().await else { return };
+
+        let resp: Response = resp_value.try_into().unwrap();
+        match resp.status() {
+            401 => {
+                if let Ok(Some(login_uri)) = resp.headers().get("Location") {
+                    let Ok(login_uri) = url::Url::parse(&resp.url()).expect("We just requested from there")
+                        .join(&login_uri)
+                        else { log::error!("Provided URI reference is invalid"); return };
+                    self.login_uris
+                        .insert(rqh.as_uri.to_owned(), login_uri.to_string());
+                    self.notify_device_list().await;
+                } else {
+                    log::error!(
+                        "Token endpoint reported Unauthorized but did not offer a better location"
+                    );
+                    return;
+                }
+            }
+            201 => {
+                let Ok(token_response) = resp.array_buffer() else { return };
+                let Ok(token_response) = token_response.js2rs().await else { return };
+                // There is a view method, but it's too unsafe
+                let token_response = js_sys::Uint8Array::new(&token_response).to_vec();
+
+                use dcaf::ToCborMap;
+                let Ok(token_response) = dcaf::AccessTokenResponse::deserialize_from(token_response.as_slice()) else {
+                        log::error!("Token response could not be parsed");
+                        return
+                    };
+
+                self.tokens.insert(rqh.clone(), token_response);
+                self.notify_device_list().await;
+                log::info!("Token obtained.");
+            }
+            _ => {
+                log::error!("Token endpoint reported unexpected code");
+                return;
+            }
+        }
+    }
+
+    /// Establish a security context for the given ID
+    ///
+    /// Currently fails silently if any pieces are missing
+    async fn try_establish_security_context(&mut self, id: &str) {
+        if self.security_contexts.contains_key(id) {
+            // All is fine already
+            return;
+        }
+
+        let Some(rs_identity) = self.rs_identities.get(id) else {
+            // Prerequisite missing, can't help it
+            return;
+        };
+        let Some(token_response) = self.tokens.get(rs_identity) else {
+            // Prerequisite missing, can't help it
+            return;
+        };
+        log::info!(
+            "Trying to establish a security context with {:?} using token {:?}",
+            rs_identity,
+            token_response
+        );
+        // FIXME: This could be avoided if we didn't use &mut so often during requesting (but we do
+        // need exclusvie access to one of the security contexts).
+        let token_response = token_response.clone();
+        let Some(dcaf::ProofOfPossessionKey::OscoreInputMaterial(material)) = &token_response.cnf.as_ref() else {
+            // It's a token we can't use ... weird, but we can't help it.
+            return;
+        };
+
+        // "The use of a 64-bit long random number is RECOMMENDED"
+        let nonce1 = &rand::random::<[u8; 8]>();
+        // Picking an arbitrary long one that's not even unique: We're only a
+        // server with this peer, so this gets never sent, and we always know
+        // from context when to use this one.
+        let client_recipient_id = b"1234";
+
+        match self
+            .write_authzinfo(
+                &id,
+                nonce1,
+                client_recipient_id,
+                &token_response.access_token,
+            )
+            .await
+        {
+            Ok((nonce2, server_recipient_id)) => {
+                log::info!("Should derive using {nonce2:?} and {server_recipient_id:?}");
+
+                let context = ace_oscore_helpers::oscore_claims::derive(
+                    material,
+                    nonce1,
+                    &nonce2,
+                    &server_recipient_id,
+                    client_recipient_id,
+                )
+                .unwrap();
+
+                log::info!(
+                    "Derived context {:?} now to be used with {:?}",
+                    &context,
+                    &id
+                );
+                self.security_contexts.insert(id.to_string(), context);
+            }
+            Err(e) => {
+                log::error!("Error occurred attempting to send a token, removing as unusable and staling RS identity data: {:?}", e);
+                self.tokens
+                    .remove(self.rs_identities.get(id).expect("We just had it"));
+                self.rs_identities.remove(id);
+            }
+        }
     }
 }

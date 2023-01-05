@@ -21,11 +21,6 @@ mod ble;
 /// [Message]s.
 struct Model {
     blepool: Option<ble::BlePool>,
-    //
-    // Not storing some pool for running async functions in -- rather trusting wasm_bindgen_futures
-    // that its spawn_local is efficient (the implementation does look like it's running on a
-    // single big global executor) -- or is it really ctx.link().send_future that is the way to go?
-    tokens: std::vec::Vec<dcaf::AccessTokenResponse>,
 }
 
 /// Events that the main [Model] receives
@@ -79,25 +74,6 @@ impl Component for Model {
     type Properties = ();
 
     fn create(ctx: &Context<Self>) -> Self {
-        let mut tokens: std::vec::Vec<dcaf::AccessTokenResponse> = Default::default();
-        let response_from_ace_java = hex_literal::hex!(
-            "
-        a2 01 58 65 d0 83 44 a1  01 18 1f a1 05 4d 67 d8
-        13 d2 cd bc 28 59 f0 c2  e9 f3 30 58 4c f3 0b 8f
-        55 a8 af 8d 1d d2 0d c0  db 44 68 50 e6 45 39 39
-        6b 0f ac fd 8b ea ef fd  9b 03 93 98 6e f9 d2 f8
-        e7 18 a3 72 ef 4c 4f b9  a6 7e f2 d2 40 26 02 34
-        5a 76 71 d4 23 08 5f f3  14 48 5a 8a f1 fd e4 1f
-        10 dc 17 20 d0 23 64 d5  0b 08 a1 04 a4 00 41 02
-        02 50 a4 ac 59 1b d4 1c  d6 21 ef a7 92 53 6a 4e
-        e5 e0 05 41 8c 06 41 02
-        "
-        );
-        use dcaf::ToCborMap;
-        tokens.push(
-            dcaf::AccessTokenResponse::deserialize_from(response_from_ace_java.as_slice()).unwrap(),
-        );
-
         let (blepool, blepool_notifications) = match ble::BlePool::new() {
             Err(e) => {
                 log::error!("Bluetooth can not be used: {:?}", e);
@@ -110,7 +86,7 @@ impl Component for Model {
             Self::link_ble_queue(ctx, blepool_notifications);
         }
 
-        Model { blepool, tokens }
+        Model { blepool }
     }
 
     fn update(&mut self, ctx: &Context<Self>, message: Self::Message) -> bool {
@@ -171,36 +147,55 @@ impl Component for Model {
             }
         };
 
+        let current_address = web_sys::window().unwrap().location().href().unwrap();
+
         let bluetooth_list = match &self.blepool {
             Some(p) => html! { <ul class="devices">
-            { for p.active_connections().map(|(id, name)| {
-                let name = name.unwrap_or("(unnamed)");
-                let temp = p.latest_temperature(id)
+            { for p.active_connections().map(|con| {
+                let name = con.name.as_deref().unwrap_or("(unnamed)");
+                let temp = p.latest_temperature(&con.id)
                     .map(|t| format!("{t} °C"))
-                    .unwrap_or_else(|| "temperature unknown".to_string());
-                let read_temp = link.callback({let id = id.to_string(); move |_| ReadTemperature(id.clone())});
-                let identify = link.callback({let id = id.to_string(); move |_| Identify(id.clone())});
-                let idle_dark = link.callback({let id = id.to_string(); move |_| SetIdle(id.clone(), 0)});
-                let idle_bright = link.callback({let id = id.to_string(); move |_| SetIdle(id.clone(), 4)});
+                    .unwrap_or_else(|| "unknown".to_string());
+                let read_temp = link.callback({let id = con.id.to_string(); move |_| ReadTemperature(id.clone())});
+                let identify = link.callback({let id = con.id.to_string(); move |_| Identify(id.clone())});
+                let idle_dark = link.callback({let id = con.id.to_string(); move |_| SetIdle(id.clone(), 0)});
+                let idle_bright = link.callback({let id = con.id.to_string(); move |_| SetIdle(id.clone(), 4)});
+
+                let mut sec_assoc = html! { <p>{ "No security identity known" }</p> };
+
+                if let Some(rs_identity) = &con.rs_identity {
+                    sec_assoc = html! { <p>{ "Security association: " }{ &rs_identity.audience }{ " at " }{ &rs_identity.as_uri }</p> };
+
+                    if let Some(login_uri) = &con.login_uri {
+                        if let Ok(mut login_uri) = url::Url::parse(login_uri) {
+                            login_uri.set_query(Some(&format!("append_and_redirect={}#{};", current_address, rs_identity.as_uri)));
+                            sec_assoc = html! { <> { sec_assoc } <p><b>{ "Login required through " }<a href={ login_uri.to_string() }>{ con.login_uri.as_ref().unwrap() }</a></b></p></> };
+                        }
+                    }
+                    // else, we'd need to take the as_uri and strip it out from our fragment to log
+                    // out
+                }
+
                 html! {
                     <li>
-                        <span class="name">{ &name }</span>{ ": " }
-                        { &temp }<button onclick={ read_temp }>{ "Read temp." }</button>
-                        <button onclick={ identify }>{ "Identify" }</button>
-                        <button onclick={ idle_dark }>{ "Idle dark" }</button>
-                        <button onclick={ idle_bright }>{ "Idle bright" }</button>
+                        <p>
+                            <span class="name">{ &name }</span>
+                            { " " }<button onclick={ identify }>{ "Find" }</button>
+                        </p>
+                        <p>
+                            { "Temperature: " }{ &temp }{ " " }<button onclick={ read_temp }>{ "Read" }</button>
+                        </p>
+                        <p>{ "Idle LED state: " }
+                            <button onclick={ idle_dark }>{ "dark" }</button>
+                            <button onclick={ idle_bright }>{ "bright" }</button>
+                        </p>
+                        { sec_assoc }
+                        <p>{ "OSCORE: " }{ if con.oscore_established { "established" } else { "not established" } }</p>
                     </li>
                 }
             }) }
             </ul> },
             None => html! { <p>{ "Bluetooth not available in this browser" }</p> },
-        };
-
-        let token_list = html! { <ul class="tokens">
-            { for self.tokens.iter().map(|t| html! {
-                <li>{ format!("{:?}", t) }</li>
-            })}
-            </ul>
         };
 
         html! {
@@ -209,9 +204,6 @@ impl Component for Model {
                 <h2>{ "Devices" }</h2>
                 { bluetooth_button }
                 { bluetooth_list }
-
-                <h2>{ "Tokens" }</h2>
-                { token_list }
             </div>
         }
     }
