@@ -1130,7 +1130,7 @@ dependencies = [
 [[package]]
 name = "liboscore"
 version = "0.1.0"
-source = "git+https://gitlab.com/oscore/liboscore/?branch=rust-backends#1a2c43f218baf9ef1b2e02759039250fb40df437"
+source = "git+https://gitlab.com/oscore/liboscore/?branch=rust-backends#dba987fee4c2141493ec8fd6bfc4601d0072c136"
 dependencies = [
  "bindgen",
  "cbindgen",
@@ -1145,7 +1145,7 @@ dependencies = [
 [[package]]
 name = "liboscore-cryptobackend"
 version = "0.1.0"
-source = "git+https://gitlab.com/oscore/liboscore/?branch=rust-backends#1a2c43f218baf9ef1b2e02759039250fb40df437"
+source = "git+https://gitlab.com/oscore/liboscore/?branch=rust-backends#dba987fee4c2141493ec8fd6bfc4601d0072c136"
 dependencies = [
  "aead",
  "aes",
@@ -1163,7 +1163,7 @@ dependencies = [
 [[package]]
 name = "liboscore-msgbackend"
 version = "0.1.0"
-source = "git+https://gitlab.com/oscore/liboscore/?branch=rust-backends#1a2c43f218baf9ef1b2e02759039250fb40df437"
+source = "git+https://gitlab.com/oscore/liboscore/?branch=rust-backends#dba987fee4c2141493ec8fd6bfc4601d0072c136"
 dependencies = [
  "coap-message",
  "coap-message-utils",

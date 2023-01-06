@@ -432,46 +432,51 @@ impl BlePoolBackend {
             .send_request(
                 id,
                 |request| {
-                    let (correlation, user_carry) =
+                    let correlation_usercarry =
                         liboscore::protect_request(request, &mut ctx, |request| {
                             write_request(request)
                         });
-                    (correlation, ctx, user_carry)
+                    (ctx, correlation_usercarry)
                 },
-                |response, (mut correlation, mut ctx, user_carry)| {
-                    use coap_message::{MessageOption, ReadableMessage};
-                    // FIXME: We need to copy things out because ReadableMessage by design only hands out
-                    // short-lived values (so they can be built in the iterator if need be). On the
-                    // plus side, this means that we're not running into the lifetime trouble one'd
-                    // expect when passing unprotect_response both a mutable message *and* an option
-                    // that references data inside it.
-                    let mut oscore_option: Option<Vec<u8>> = None;
-                    for o in response.options() {
-                        if o.number() == coap_numbers::option::OSCORE {
-                            oscore_option = Some(o.value().into());
-                            break;
+                |response, (mut ctx, correlation_usercarry)| {
+                    if let Ok((mut correlation, user_carry)) = correlation_usercarry {
+                        use coap_message::{MessageOption, ReadableMessage};
+                        // FIXME: We need to copy things out because ReadableMessage by design only hands out
+                        // short-lived values (so they can be built in the iterator if need be). On the
+                        // plus side, this means that we're not running into the lifetime trouble one'd
+                        // expect when passing unprotect_response both a mutable message *and* an option
+                        // that references data inside it.
+                        let mut oscore_option: Option<Vec<u8>> = None;
+                        for o in response.options() {
+                            if o.number() == coap_numbers::option::OSCORE {
+                                oscore_option = Some(o.value().into());
+                                break;
+                            }
                         }
-                    }
-                    let oscore_option = liboscore::OscoreOption::parse(
-                        oscore_option.as_ref().expect("No OSCORE option"), // FIXME error handling
-                    )
-                    .expect("Unparsable OSCORE option");
+                        let oscore_option = liboscore::OscoreOption::parse(
+                            oscore_option.as_ref().expect("No OSCORE option"), // FIXME error handling
+                        )
+                        .expect("Unparsable OSCORE option");
 
-                    let user_response = liboscore::unprotect_response(
-                        response,
-                        &mut ctx,
-                        oscore_option,
-                        &mut correlation,
-                        |response| read_response(response, user_carry),
-                    );
-                    (ctx, user_response)
+                        let user_response = liboscore::unprotect_response(
+                            response,
+                            &mut ctx,
+                            oscore_option,
+                            &mut correlation,
+                            |response| read_response(response, user_carry),
+                        )
+                        .map_err(|_| "Error unprotecting the response");
+                        (ctx, user_response)
+                    } else {
+                        (ctx, Err("Error encrypting the request"))
+                    }
                 },
             )
             .await;
 
         self.security_contexts.insert(id.to_string(), ctx);
 
-        Ok(user_response)
+        user_response
     }
 
     async fn write_time(&mut self, id: &str) {
