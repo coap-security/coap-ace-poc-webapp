@@ -332,8 +332,6 @@ impl BlePoolBackend {
                             self_.try_get_rqh(&id).await;
                             self_.try_get_token(&id).await;
                             self_.try_establish_security_context(&id).await;
-
-                            self_.notify_device_list().await;
                         }
                         Err(e) => {
                             log::error!("Could not connect: {e}");
@@ -344,12 +342,19 @@ impl BlePoolBackend {
                 Some(ReadTemperature(id)) => {
                     let temp = self_.read_temperature(&id).await;
                     self_.notify(ReceivedTemperature(id, temp.ok())).await;
+                    if let Err(e) = temp {
+                        log::error!("Failed to read temperature: {e}");
+                    }
                 }
                 Some(Identify(id)) => {
-                    self_.identify(&id).await;
+                    if let Err(e) = self_.identify(&id).await {
+                        log::error!("Failed to identify device: {e}");
+                    }
                 }
                 Some(SetIdle(id, level)) => {
-                    self_.set_idle(&id, level).await;
+                    if let Err(e) = self_.set_idle(&id, level).await {
+                        log::error!("Failed to identify device: {e}");
+                    }
                 }
                 // Whatever spawned us doesn't want us any more
                 None => break,
@@ -453,10 +458,12 @@ impl BlePoolBackend {
                                 break;
                             }
                         }
-                        let oscore_option = liboscore::OscoreOption::parse(
-                            oscore_option.as_ref().expect("No OSCORE option"), // FIXME error handling
-                        )
-                        .expect("Unparsable OSCORE option");
+                        let Some(oscore_option) = oscore_option.as_ref() else {
+                            return (ctx, Err("No OSCORE option, server did not have a suitable context"))
+                        };
+                        let Ok(oscore_option) = liboscore::OscoreOption::parse(oscore_option) else {
+                            return (ctx, Err("Server produced invalid OSCORE option"))
+                        };
 
                         let user_response = liboscore::unprotect_response(
                             response,
@@ -474,7 +481,13 @@ impl BlePoolBackend {
             )
             .await;
 
-        self.security_contexts.insert(id.to_string(), ctx);
+        if user_response.is_ok() {
+            self.security_contexts.insert(id.to_string(), ctx);
+        } else {
+            // Let's not even put back the security context -- it just failed, so it's probably
+            // broken. The token may or may not still be good.
+            self.notify_device_list().await;
+        }
 
         user_response
     }
@@ -576,7 +589,7 @@ impl BlePoolBackend {
         })
     }
 
-    async fn identify(&mut self, id: &str) {
+    async fn identify(&mut self, id: &str) -> Result<(), &'static str> {
         // No error handling because this resource returns success anyway (and the success is
         // indicated remotely)
         self.send_request_protected(
@@ -592,10 +605,10 @@ impl BlePoolBackend {
             },
             |_, ()| {},
         )
-        .await;
+        .await
     }
 
-    async fn set_idle(&mut self, id: &str, level: u8) {
+    async fn set_idle(&mut self, id: &str, level: u8) -> Result<(), &'static str> {
         // This would be moderately smoother if a WindowedInfinityWithETag writer could ve
         // constructed easily for a message when we don't expect blockwising and are in a request
         let mut level_buffer = Vec::with_capacity(2);
@@ -612,7 +625,7 @@ impl BlePoolBackend {
             },
             |_, ()| {},
         )
-        .await;
+        .await
     }
 
     // FIXME actually token plus local nonce1 and id1
@@ -880,12 +893,15 @@ impl BlePoolBackend {
                     &id
                 );
                 self.security_contexts.insert(id.to_string(), context);
+                self.notify_device_list().await;
             }
             Err(e) => {
                 log::error!("Error occurred attempting to send a token, removing as unusable and staling RS identity data: {:?}", e);
                 self.tokens
                     .remove(self.rs_identities.get(id).expect("We just had it"));
+                // and for good measure
                 self.rs_identities.remove(id);
+                self.notify_device_list().await;
             }
         }
     }
