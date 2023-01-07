@@ -327,7 +327,10 @@ impl BlePoolBackend {
                     match self_.try_connect(&bluetooth).await {
                         Ok(id) => {
                             self_.notify_device_list().await;
-                            self_.write_time(&id).await;
+                            match self_.write_time(&id).await {
+                                Ok(()) => (),
+                                Err(e) => log::error!("Failed to write time: {}", e),
+                            }
 
                             self_.try_get_rqh(&id).await;
                             self_.try_get_token(&id).await;
@@ -369,7 +372,7 @@ impl BlePoolBackend {
         id: &str,
         write_request: impl FnOnce(&mut coap_gatt_utils::WriteMessage<'_>) -> CARRY,
         read_response: impl FnOnce(&mut coap_gatt_utils::ReadWriteMessage<'_>, CARRY) -> R,
-    ) -> R {
+    ) -> Result<R, &'static str> {
         let connection = &self.connections[id];
 
         let mut carry = None;
@@ -381,23 +384,33 @@ impl BlePoolBackend {
 
         log::debug!("Writing to charcteristic with length {}", request.len());
 
-        connection
+        let result = connection
             .characteristic
             .write_value_with_u8_array(&mut request)
             .js2rs()
-            .await
-            // FIXME: How can we do better here? Can this be discovered in advance, and then made
-            // usable by the application in `.available_len()`?
-            .expect("Request exceeds length the device can accept");
+            .await;
+
+        match result {
+            Ok(_) => (),
+            Err(e) => {
+                log::error!("Request could not be sent ({:?}), removing connection", e);
+                self.connections.remove(id);
+                self.notify_device_list().await;
+                return Err("Failed to send request");
+            }
+        };
 
         let mut response = loop {
-            let response: js_sys::DataView = connection
-                .characteristic
-                .read_value()
-                .js2rs()
-                .await
-                .unwrap()
-                .into();
+            let response = connection.characteristic.read_value().js2rs().await;
+            let response: js_sys::DataView = match response {
+                Ok(r) => r.into(),
+                Err(e) => {
+                    log::error!("Response could not be read ({:?}), removing connection", e);
+                    self.connections.remove(id);
+                    self.notify_device_list().await;
+                    return Err("Failed to read response");
+                }
+            };
             // FIXME I'd rather not allocate here
             let response = js_sys::Uint8Array::new(&response.buffer()).to_vec();
 
@@ -411,7 +424,7 @@ impl BlePoolBackend {
 
         let mut coap_response = coap_gatt_utils::parse_mut(&mut response).unwrap();
 
-        read_response(&mut coap_response, carry)
+        Ok(read_response(&mut coap_response, carry))
     }
 
     async fn send_request_protected<R, CARRY>(
@@ -479,7 +492,7 @@ impl BlePoolBackend {
                     }
                 },
             )
-            .await;
+            .await?;
 
         if user_response.is_ok() {
             self.security_contexts.insert(id.to_string(), ctx);
@@ -492,7 +505,7 @@ impl BlePoolBackend {
         user_response
     }
 
-    async fn write_time(&mut self, id: &str) {
+    async fn write_time(&mut self, id: &str) -> Result<(), &'static str> {
         let time_now: u32 = instant::SystemTime::now()
             .duration_since(instant::SystemTime::UNIX_EPOCH)
             .unwrap()
@@ -516,7 +529,7 @@ impl BlePoolBackend {
                 log::info!("Time written, code {:?}", response.code());
             },
         )
-        .await;
+        .await
     }
 
     /// Try reading the temperature, but don't even try to do it through OSCORE
@@ -541,7 +554,7 @@ impl BlePoolBackend {
                 RequestCreationHints::parse_cbor(response.payload())
             },
         )
-        .await
+        .await?
     }
 
     async fn read_temperature(&mut self, id: &str) -> Result<f32, &'static str> {
@@ -695,7 +708,7 @@ impl BlePoolBackend {
                 }
             },
         )
-        .await
+        .await?
     }
 
     /// Try to determine the audience value of a given peer.
