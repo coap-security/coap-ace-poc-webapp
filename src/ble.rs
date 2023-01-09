@@ -577,7 +577,21 @@ impl BlePoolBackend {
             self.security_contexts.insert(id.to_string(), ctx);
         } else {
             // Let's not even put back the security context -- it just failed, so it's probably
-            // broken. The token may or may not still be good.
+            // broken. As we've received a response and it's really just the OSCORE layer that was
+            // broken, it's likely that not only the OSCORE context is over, but the underlying
+            // token as well. Removing that token because this makes a smoother experience
+            // retry-wise because we have users who retry here. Leaving the rs_identity in place
+            // because it'd only change if people start flashing different RSes onto the same BLE
+            // MACs (which is weird enough to warrant some breakage, but on the upside this keeps
+            // the device identity visible, and avoids switcharoos as the app won't try addressing
+            // the previously known device with a different security context).
+
+            // In real deployments, these would be much less relevant considerations, and there
+            // could be a more defensive removal scheme coupled with eager reestablishments.
+            let Some(rch) = self.rs_identities.get(id) else {
+                panic!("There can't be a security context on an unknown device");
+            };
+            self.tokens.remove(&rch);
             self.notify_device_list().await;
         }
 
