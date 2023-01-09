@@ -12,6 +12,7 @@ var all_files = [
   './coap-ace-poc-webapp.js',
   './coap-ace-poc-webapp_bg.wasm',
   './icon.svg',
+  './style.css',
 ];
 
 self.addEventListener('install', function(e) {
