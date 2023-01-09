@@ -205,6 +205,7 @@ impl Component for Model {
         html! {
             <div>
                 <h1>{ "CoAP ACE PoC: The App" }</h1>
+                <p id="crashreport" style="display:none">{ "This application has crashed, this is a bug. Additional details are available in the browser's console, please report them at " }<a href={built_info::PKG_REPOSITORY}>{ "the application's source" }</a>{ "." } </p>
                 <h2>{ "Devices" }</h2>
                 { bluetooth_button }
                 { bluetooth_list }
@@ -220,13 +221,25 @@ impl Component for Model {
     }
 }
 
+#[wasm_bindgen::prelude::wasm_bindgen]
+extern "C" {
+    /// Show an HTML element that makes it visible to the user that the application just crashed.
+    fn indicate_panic_happened();
+}
+
+/// Run the default panic handler, but also fan out to [indicate_panic_happened].
+fn panic(info: &core::panic::PanicInfo<'_>) {
+    indicate_panic_happened();
+    console_error_panic_hook::hook(info);
+}
+
 pub fn main() {
     console_log::init_with_level(log::Level::Debug).expect("Console not available for logging");
 
     // Note that panics before this line would not be caugt, but it's not worth the confusion to
     // pull in console_error_panic_hook just to get that feature one line earlier.
     yew::start_app::<Model>();
-    yew::set_custom_panic_hook(Box::new(console_error_panic_hook::hook));
+    yew::set_custom_panic_hook(Box::new(panic));
 
     log::info!("App started.");
 

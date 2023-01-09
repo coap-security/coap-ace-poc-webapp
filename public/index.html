@@ -11,6 +11,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="stylesheet" href="style.css" />
     <script type="module">
+      window.indicate_panic_happened = function() {
+        // See main.rs's `extern "C"` declaration for documentation
+        let crashreport = document.getElementById("crashreport");
+        if (!crashreport) return;
+        crashreport.style.display = "block";
+      }
+
       navigator.serviceWorker
               .register('./service_worker.js');
 
