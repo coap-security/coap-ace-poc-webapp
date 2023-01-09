@@ -353,7 +353,7 @@ impl BlePoolBackend {
                                 Err(e) => log::error!("Failed to write time: {}", e),
                             }
 
-                            self_.try_get_rqh(&id).await;
+                            self_.try_get_rch(&id).await;
                             self_.try_get_token(&id).await;
                             self_.try_establish_security_context(&id).await;
                         }
@@ -454,7 +454,7 @@ impl BlePoolBackend {
         write_request: impl FnOnce(&mut liboscore::ProtectedMessage) -> CARRY,
         read_response: impl FnOnce(&liboscore::ProtectedMessage, CARRY) -> R,
     ) -> Result<R, &'static str> {
-        self.try_get_rqh(id).await;
+        self.try_get_rch(id).await;
         self.try_get_token(id).await;
         self.try_establish_security_context(id).await;
 
@@ -733,7 +733,7 @@ impl BlePoolBackend {
     }
 
     /// Try to determine the audience value of a given peer.
-    async fn try_get_rqh(&mut self, id: &str) {
+    async fn try_get_rch(&mut self, id: &str) {
         if self.rs_identities.get(id).is_some() {
             // All is fine already
             return;
@@ -762,11 +762,11 @@ impl BlePoolBackend {
     ///
     /// Currently fails silently if there is no rs_identities entry.
     async fn try_get_token(&mut self, id: &str) {
-        let Some(rqh) = self.rs_identities.get(id) else {
+        let Some(rch) = self.rs_identities.get(id) else {
             // Prerequisite missing, can't help it
             return;
         };
-        if self.tokens.contains_key(rqh) {
+        if self.tokens.contains_key(rch) {
             // All is fine already
             return;
         };
@@ -775,7 +775,7 @@ impl BlePoolBackend {
         use web_sys::{Request, RequestCredentials, RequestInit, RequestMode, Response};
 
         let mut token_request = std::collections::HashMap::new();
-        token_request.insert(5u8, &rqh.audience);
+        token_request.insert(5u8, &rch.audience);
         let mut request_buffer = Vec::with_capacity(50);
         ciborium::ser::into_writer(&token_request, &mut request_buffer)
             .expect("Map can be encoded");
@@ -787,9 +787,9 @@ impl BlePoolBackend {
             // anyway
             .body(Some(&body));
 
-        let Ok(request) = Request::new_with_str_and_init(&rqh.as_uri, &opts) else { return };
+        let Ok(request) = Request::new_with_str_and_init(&rch.as_uri, &opts) else { return };
 
-        if let Some(authvalue) = self.http_authorization_for(&rqh.as_uri) {
+        if let Some(authvalue) = self.http_authorization_for(&rch.as_uri) {
             request.headers().set("Authorization", &authvalue).unwrap();
         }
 
@@ -804,7 +804,7 @@ impl BlePoolBackend {
                         .join(&login_uri)
                         else { log::error!("Provided URI reference is invalid"); return };
                     self.login_uris
-                        .insert(rqh.as_uri.to_owned(), login_uri.to_string());
+                        .insert(rch.as_uri.to_owned(), login_uri.to_string());
                     self.notify_device_list().await;
                 } else {
                     log::error!(
@@ -825,7 +825,7 @@ impl BlePoolBackend {
                         return
                     };
 
-                self.tokens.insert(rqh.clone(), token_response);
+                self.tokens.insert(rch.clone(), token_response);
                 self.notify_device_list().await;
                 log::info!("Token obtained.");
             }
