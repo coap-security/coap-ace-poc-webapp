@@ -419,8 +419,20 @@ impl BlePoolBackend {
                     }
                 }
                 Some(AddDeviceManually(rch)) => {
-                    // FIXME: Maybe it's already present, and we should remove the token first?
-                    self_.preseeded_rch.insert(rch.clone());
+                    if let Some(id) = self_
+                        .rs_identities
+                        .iter()
+                        .filter(|(_, item_rch)| item_rch == &&rch)
+                        .map(|(id, _)| id)
+                        .next()
+                    {
+                        // Device is present; AddDeviceManually doubles as "remove all credentials"
+                        let _ = self_.security_contexts.remove(id);
+                    } else {
+                        // Just insert it if it's not present in rs_identities anyway
+                        self_.preseeded_rch.insert(rch.clone());
+                    };
+                    let _ = self_.tokens.remove(&rch);
                     self_.notify_device_list().await;
                     self_.try_get_token(&rch).await;
                 }
