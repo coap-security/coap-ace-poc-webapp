@@ -18,7 +18,7 @@ wasm-bindgen = "^0.2.83"
 wasm-bindgen-futures = "^0.4.33"
 futures = "0.3.25"
 js-sys = "^0.3.60"
-web-sys = { version = "^0.3.60", features = [ "Navigator" , "Bluetooth", "RequestDeviceOptions", "BluetoothDevice", "BluetoothRemoteGattServer", "BluetoothRemoteGattService", "BluetoothRemoteGattCharacteristic", "BluetoothLeScanFilterInit", "BluetoothCharacteristicProperties"] }
+web-sys = { version = "= 0.3.60", features = [ "Navigator" , "Bluetooth", "RequestDeviceOptions", "BluetoothDevice", "BluetoothRemoteGattServer", "BluetoothRemoteGattService", "BluetoothRemoteGattCharacteristic", "BluetoothLeScanFilterInit", "BluetoothCharacteristicProperties"] }
 instant = { version = "0.1.12", features = [ "wasm-bindgen" ] }
 dcaf = { version = "0.3.1", default-features = false }
 url = "2"

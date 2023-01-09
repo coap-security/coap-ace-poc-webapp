@@ -10,6 +10,23 @@
 //!
 //! [CoAP/ACE PoC demo firmware]: https://gitlab.com/oscore/coap-ace-poc-firmware
 //! [yew]: https://yew.rs/
+//!
+//! Building
+//! --------
+//!
+//! Code in this module is compiled with cargo, and needs its WASM bindings generated through
+//! wasm-bindgen into the `public/` directory in an extra step. The
+//! `RUSTFLAGS=--cfg=web_sys_unstable_apis` environment variable needs to be set during building
+//! because web-sys' Bluetooth APIs are not considered stable yet; the forced version in Cargo.toml
+//! takes care of any future incompatibilities. It is recommended to set that variable also before
+//! invoking any source code editor, as this allows any integrated linters to recognize functions
+//! that are only present when that flag is set.
+//!
+//! The service worker used for making the web site usable as a PWA is shipped as
+//! `public/service_worker.js.in` and represents a template into which a build ID should be
+//! populated for easy updating of the installed PWA.
+//!
+//! The file `./.gitlab-ci` contains concrete commands for all these steps.
 
 use yew::prelude::*;
 
@@ -62,12 +79,16 @@ enum Message {
 
     SetManualDeviceAsUri(String),
     SetManualDeviceAudience(String),
+    /// Add a device to the BLE list even though it was not discovered there yet, based on the AS
+    /// URI and audience values manually entered using the [SetManualDeviceAsUri] and
+    /// [SetManualDeviceAudience] events. This also removes any tokens or security associations for
+    /// that device.
     ManualDeviceRequest,
 }
 use Message::*;
 
 impl Model {
-    /// An allways-running yew "send_future" that waits for changes from the Bluetooth side, and
+    /// An always-running yew "send_future" that waits for changes from the Bluetooth side, and
     /// passes them on as events. It also passes on the queue, so that when the model reacts to the
     /// message, it can start the cycle anew.
     fn link_ble_queue(
@@ -364,6 +385,7 @@ pub fn main() {
     log::info!("OSCORE self-tests passed");
 }
 
+/// A self test for OSCORE (adjusted from libOSCORE sources)
 pub fn do_oscore_test() -> Result<(), &'static str> {
     use core::mem::MaybeUninit;
 

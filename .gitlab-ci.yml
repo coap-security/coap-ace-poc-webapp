@@ -1,8 +1,8 @@
 pages:
   image: docker.io/debian:bookworm
   script:
-    # That libc6-dev-i386 fixes things indicates trouble somewhere else, buk
-    # thigns do pass tests with that.
+    # That libc6-dev-i386 fixes things indicates trouble somewhere else, but
+    # things do pass tests with that.
     - apt-get update && apt-get install -y curl git libclang-dev clang libc6-dev-i386 pkg-config libssl-dev
     - "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain nightly"
     - source "$HOME/.cargo/env"

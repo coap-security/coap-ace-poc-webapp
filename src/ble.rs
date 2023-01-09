@@ -7,9 +7,9 @@
 //!
 //! * [BlePoolBackend] runs itself in a dedicated task, and is independend of yew or (ideally) the
 //!   application. It deals in asyncs.
-//!
-//! FIXME: Split the pure CoAP-over-GATT from application specifics, and possibly even the
-//! application specifics from the yew-specific async adapter
+//
+// FIXME: Split the pure CoAP-over-GATT from application specifics, and possibly even the
+// application specifics from the yew-specific async adapter
 
 // From CoAP-over-GATT draft
 const UUID_US: &'static str = "8df804b7-3300-496d-9dfa-f8fb40a236bc";
@@ -49,6 +49,7 @@ pub struct DeviceDetails {
     pub oscore_established: bool,
 }
 
+/// Messages emitted by yew through the [BlePool], directing the BLE main loop in the [BlePoolBackned]
 #[derive(Debug)]
 pub enum FrontToBackMessage {
     /// Probe for any available device
@@ -60,12 +61,17 @@ pub enum FrontToBackMessage {
     /// Set the number of LEDs active when identify is not running
     SetIdle(DeviceId, u8),
 
+    /// Add a device based on request creation hints. Also removes security associations, if the
+    /// device is already known.
     AddDeviceManually(RequestCreationHints),
 
+    /// Remove a BLE device (but not any credentials associated with it) from the list, and
+    /// ask the browser to disconnect it.
     Disconnect(DeviceId),
 }
 use FrontToBackMessage::*;
 
+/// Messages produced by the [BlePoolBackend] updating the yew side
 #[derive(Debug)]
 pub enum BackToFrontMessage {
     /// The list of devices has changed
@@ -90,6 +96,7 @@ pub struct BlePool {
     most_recent_temperatures: std::collections::HashMap<DeviceId, f32>,
 }
 
+/// Error type indicating browsers without WebBluetooth support
 #[derive(Debug)]
 pub struct NoWebBluetoothSupport;
 
@@ -116,6 +123,8 @@ struct BlePoolBackend {
     security_contexts: std::collections::HashMap<DeviceId, liboscore::PrimitiveContext>,
 }
 
+/// A BLE characteristic (from which the device, GATT and other JavaScript components can be
+/// restored), along with the name it was discovered under.
 struct BleConnection {
     name: Option<String>,
     characteristic: web_sys::BluetoothRemoteGattCharacteristic,
@@ -198,6 +207,10 @@ impl BlePool {
             });
     }
 
+    /// Change entry point for the backend.
+    ///
+    /// The user (usually a yew component) needs to send any messages emitted by the receiver
+    /// created in `new()` into this function.
     pub fn notify(&mut self, message: BackToFrontMessage) {
         match message {
             UpdateDeviceList(list) => {
@@ -214,6 +227,7 @@ impl BlePool {
 }
 
 impl BlePoolBackend {
+    /// Open the browser's BLE connect dialog, filtering for CoAP-over-GATT devices
     // In a sense it's suboptimal for this be blocked on by .run(), but it makes general state
     // handling easier; could be revisited, though.
     async fn try_connect(
