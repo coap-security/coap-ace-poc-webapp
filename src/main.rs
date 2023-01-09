@@ -26,6 +26,11 @@ pub mod built_info {
 /// [Message]s.
 struct Model {
     blepool: Option<ble::BlePool>,
+
+    // FIXME: The verbosity around these is sad (this is really a simple form), hints appreciated
+    // as to how to simplify them.
+    manual_device_as_uri: String,
+    manual_device_audience: String,
 }
 
 /// Events that the main [Model] receives
@@ -49,6 +54,10 @@ enum Message {
 
     /// Remove a URI from the list of currently logged-in-to ASes
     LogoutFrom(String),
+
+    SetManualDeviceAsUri(String),
+    SetManualDeviceAudience(String),
+    ManualDeviceRequest,
 }
 use Message::*;
 
@@ -94,7 +103,11 @@ impl Component for Model {
             Self::link_ble_queue(ctx, blepool_notifications);
         }
 
-        Model { blepool }
+        Model {
+            blepool,
+            manual_device_as_uri: "https://as.coap.amsuess.com/token".to_string(),
+            manual_device_audience: "d01".to_string(),
+        }
     }
 
     fn update(&mut self, ctx: &Context<Self>, message: Self::Message) -> bool {
@@ -145,6 +158,27 @@ impl Component for Model {
                     .unwrap();
                 true
             }
+            SetManualDeviceAsUri(s) => {
+                self.manual_device_as_uri = s;
+                false
+            }
+            SetManualDeviceAudience(s) => {
+                self.manual_device_audience = s;
+                false
+            }
+            ManualDeviceRequest => {
+                if let Some(pool) = self.blepool.as_mut() {
+                    // FIXME: Here it becomes weird that so much is running through the BLE pool -- but
+                    // given how large a threshold there is to cross between the async and the yew
+                    // world, it's the easiest way.
+                    let rch = ace_oscore_helpers::request_creation_hints::RequestCreationHints {
+                        as_uri: self.manual_device_as_uri.clone(),
+                        audience: self.manual_device_audience.clone(),
+                    };
+                    pool.add_device_manually(rch);
+                }
+                false
+            }
 
             NoOp => false,
         }
@@ -171,6 +205,21 @@ impl Component for Model {
                 <h2>{ "Devices" }</h2>
                 { bluetooth_button }
                 { self.view_bluetooth_list(ctx) }
+                <details><summary>{ "Add device manually" }</summary>
+                // The "action" is a workaround for submit link callbacks apparently not being
+                // cancellable through yew
+                <form onsubmit={ link.callback(|_| ManualDeviceRequest ) } action="javascript:;">
+                    <p>
+                        <label for="input_as_uri">{ "AS URI:" }</label>{ " " }
+                        <input type="url" id="input_as_uri" value={ self.manual_device_as_uri.clone() } onchange={ link.callback(|e: Event| SetManualDeviceAsUri(e.target_unchecked_into::<web_sys::HtmlInputElement>().value())) } />
+                    </p>
+                    <p>
+                        <label for="input_audience">{ "Audience:" }</label>{ " " }
+                        <input type="text" id="input_audience" value={ self.manual_device_audience.clone() } onchange={ link.callback(|e: Event| SetManualDeviceAudience(e.target_unchecked_into::<web_sys::HtmlInputElement>().value())) } />
+                    </p>
+                    <p><input type="submit" value="Add device manually" /></p>
+                </form>
+                </details>
                 <h2>{ "Tokens" }</h2>
                 { self.view_token_list(ctx) }
                 <h2>{ "Logins" }</h2>

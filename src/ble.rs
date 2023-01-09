@@ -56,6 +56,8 @@ pub enum FrontToBackMessage {
     Identify(DeviceId),
     /// Set the number of LEDs active when identify is not running
     SetIdle(DeviceId, u8),
+
+    AddDeviceManually(RequestCreationHints),
 }
 use FrontToBackMessage::*;
 
@@ -95,6 +97,13 @@ struct BlePoolBackend {
     connections: std::collections::HashMap<DeviceId, BleConnection>,
     /// Most recent request creation hint obtained from the device with the given ID
     rs_identities: std::collections::HashMap<DeviceId, RequestCreationHints>,
+    /// RCHs that were not found in any concrete BLE device, but are known from other sources
+    /// (add_device_manually).
+    ///
+    /// Items in here are very similar to rs_identities entries, except that they've never seen a
+    /// BLE device. Devices that vanish still have their DeviceId an can be kept in rs_identities
+    /// even when the connections are gone.
+    preseeded_rch: std::collections::HashSet<RequestCreationHints>,
     /// Login URIs that we were redirected to
     login_uris: std::collections::HashMap<String, String>,
     /// Tokens requested from the AS
@@ -158,6 +167,10 @@ impl BlePool {
 
     pub fn set_idle(&mut self, device: DeviceId, level: u8) {
         self.request(SetIdle(device, level));
+    }
+
+    pub fn add_device_manually(&mut self, rch: RequestCreationHints) {
+        self.request(AddDeviceManually(rch));
     }
 
     pub fn latest_temperature(&self, device: &str) -> Option<f32> {
@@ -321,6 +334,19 @@ impl BlePoolBackend {
             })
             .collect();
 
+        new_list.extend(self.preseeded_rch.iter().map(|rch| {
+            DeviceDetails {
+                id: None,
+                name: None,
+                rs_identity: Some(rch.clone()),
+                login_uri: self
+                    .login_uris
+                    .get(rch.as_uri.as_str())
+                    .map(|login| login.to_owned()),
+                oscore_established: false,
+            }
+        }));
+
         let tokens = self
             .tokens
             .iter()
@@ -348,6 +374,7 @@ impl BlePoolBackend {
             back2front,
             connections: Default::default(),
             rs_identities: Default::default(),
+            preseeded_rch: Default::default(),
             login_uris: Default::default(),
             tokens: Default::default(),
             security_contexts: Default::default(),
@@ -395,6 +422,11 @@ impl BlePoolBackend {
                     if let Err(e) = self_.set_idle(&id, level).await {
                         log::error!("Failed to identify device: {e}");
                     }
+                }
+                Some(AddDeviceManually(rch)) => {
+                    // FIXME: Maybe it's already present, and we should remove the token first?
+                    self_.preseeded_rch.insert(rch.clone());
+                    self_.try_get_token(&rch).await;
                 }
                 // Whatever spawned us doesn't want us any more
                 None => break,
@@ -761,6 +793,10 @@ impl BlePoolBackend {
 
         let response = self.prod_temperature(&id).await;
         if let Ok(rs_identity) = response {
+            // Remove them if they happened to be present without a BLE ID, even though that's
+            // typically not the case
+            let _ = self.preseeded_rch.remove(&rs_identity);
+
             // If we don't get any, it's probably game over here, but no
             // reason to crash
             self.rs_identities.insert(id.to_string(), rs_identity);
