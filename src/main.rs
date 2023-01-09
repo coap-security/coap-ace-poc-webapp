@@ -225,13 +225,32 @@ impl Model {
             Some(p) => html! { <ul class="devices">
             { for p.active_connections().map(|con| {
                 let name = con.name.as_deref().unwrap_or("(unnamed)");
-                let temp = p.latest_temperature(&con.id)
-                    .map(|t| format!("{t} °C"))
-                    .unwrap_or_else(|| "unknown".to_string());
-                let read_temp = link.callback({let id = con.id.to_string(); move |_| ReadTemperature(id.clone())});
-                let identify = link.callback({let id = con.id.to_string(); move |_| Identify(id.clone())});
-                let idle_dark = link.callback({let id = con.id.to_string(); move |_| SetIdle(id.clone(), 0)});
-                let idle_bright = link.callback({let id = con.id.to_string(); move |_| SetIdle(id.clone(), 4)});
+                let operative = if let Some(id) = con.id.as_ref() {
+                    let temp = p.latest_temperature(id)
+                        .map(|t| format!("{t} °C"))
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let read_temp = link.callback({let id = id.to_string(); move |_| ReadTemperature(id.clone())});
+                    let identify = link.callback({let id = id.to_string(); move |_| Identify(id.clone())});
+                    let idle_dark = link.callback({let id = id.to_string(); move |_| SetIdle(id.clone(), 0)});
+                    let idle_bright = link.callback({let id = id.to_string(); move |_| SetIdle(id.clone(), 4)});
+                    html! {
+                        <>
+                            <p>
+                                <span class="name">{ &name }</span>
+                                { " " }<button onclick={ identify }>{ "Find" }</button>
+                            </p>
+                            <p>
+                                { "Temperature: " }{ &temp }{ " " }<button onclick={ read_temp }>{ "Read" }</button>
+                            </p>
+                            <p>{ "Idle LED state: " }
+                                <button onclick={ idle_dark }>{ "dark" }</button>
+                                <button onclick={ idle_bright }>{ "bright" }</button>
+                            </p>
+                        </>
+                    }
+                } else {
+                    html! { <p>{ "Device currently not connected." }</p> }
+                };
 
                 let mut sec_assoc = html! { <p>{ "No security identity known" }</p> };
 
@@ -250,17 +269,7 @@ impl Model {
 
                 html! {
                     <li>
-                        <p>
-                            <span class="name">{ &name }</span>
-                            { " " }<button onclick={ identify }>{ "Find" }</button>
-                        </p>
-                        <p>
-                            { "Temperature: " }{ &temp }{ " " }<button onclick={ read_temp }>{ "Read" }</button>
-                        </p>
-                        <p>{ "Idle LED state: " }
-                            <button onclick={ idle_dark }>{ "dark" }</button>
-                            <button onclick={ idle_bright }>{ "bright" }</button>
-                        </p>
+                        { operative }
                         { sec_assoc }
                         <p>{ "OSCORE: " }{ if con.oscore_established { "established" } else { "not established" } }</p>
                     </li>

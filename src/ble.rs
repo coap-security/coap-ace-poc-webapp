@@ -30,11 +30,18 @@ type DeviceId = String;
 type RequestCreationHints =
     ace_oscore_helpers::request_creation_hints::RequestCreationHints<String>;
 
+/// Data exposed by teh BLE module toward the front end
 #[derive(Debug)]
 pub struct DeviceDetails {
-    pub id: DeviceId,
+    /// ID needed to do actions on the device.
+    ///
+    /// Absence indicates that the device is not connected.
+    pub id: Option<DeviceId>,
+    /// User-visible name if provided at BLE level
     pub name: Option<String>,
+    /// Claimed cryptographic identity
     pub rs_identity: Option<RequestCreationHints>,
+    /// URI a failed attempt to abtain an OSCORE token from this RCH redirected to
     pub login_uri: Option<String>,
     pub oscore_established: bool,
 }
@@ -93,7 +100,7 @@ struct BlePoolBackend {
     /// Tokens requested from the AS
     tokens: std::collections::HashMap<RequestCreationHints, dcaf::AccessTokenResponse>,
     /// Established security contexts
-    security_contexts: std::collections::HashMap<String, liboscore::PrimitiveContext>,
+    security_contexts: std::collections::HashMap<DeviceId, liboscore::PrimitiveContext>,
 }
 
 struct BleConnection {
@@ -290,14 +297,21 @@ impl BlePoolBackend {
     }
 
     async fn notify_device_list(&mut self) {
-        let new_list = self
-            .connections
+        // Doing this through a new map is inefficient compared to making all things keyed by id be
+        // a BTreeMap and mergesorting them, or to using a single map with many optional values.
+        let mut ids = std::collections::HashSet::new();
+        ids.extend(self.connections.keys());
+        ids.extend(self.rs_identities.keys());
+
+        let mut new_list: Vec<_> = ids
             .iter()
-            .map(|(id, con)| {
+            .map(|id| {
+                let id: &str = id.as_ref();
                 let rs_identity = self.rs_identities.get(id);
+                let con = self.connections.get(id);
                 DeviceDetails {
-                    id: id.clone(),
-                    name: con.name.as_ref().map(|n| n.clone()),
+                    id: Some(id.to_string()),
+                    name: con.and_then(|c| Some(c.name.as_ref()?.clone())),
                     rs_identity: rs_identity.cloned(),
                     login_uri: rs_identity
                         .map(|i| &i.as_uri)
