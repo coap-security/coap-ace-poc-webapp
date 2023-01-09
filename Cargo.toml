@@ -49,6 +49,8 @@ getrandom = { version = "0.2", features = [ "js" ] }
 # Some dependency pulls in serde_cbor with no default features (std), someone else pulls in serde with default features (std), but these need to be aligned
 serde_cbor = "*"
 
+hex = "0.4.3"
+
 [build-dependencies]
 # Note that this works best when not doing shallow clones while git2 doesn't
 # support these; best disable shallow clones in CI.

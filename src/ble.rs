@@ -57,7 +57,7 @@ pub enum BackToFrontMessage {
     /// The list of devices has changed
     ///
     /// (Alternatively, this could be expressed in a series of removals and and additions)
-    UpdateDeviceList(Vec<DeviceDetails>),
+    UpdateDeviceList(Vec<DeviceDetails>, Vec<(RequestCreationHints, String)>),
     /// A temperature reading was obtained from a device
     ReceivedTemperature(DeviceId, Option<f32>),
 }
@@ -74,6 +74,7 @@ pub struct BlePool {
     front2back: futures::channel::mpsc::Sender<FrontToBackMessage>,
     most_recent_connections: Vec<DeviceDetails>,
     most_recent_temperatures: std::collections::HashMap<DeviceId, f32>,
+    recent_tokens: Vec<(RequestCreationHints, String)>,
 }
 
 #[derive(Debug)]
@@ -130,6 +131,7 @@ impl BlePool {
                 front2back: front2back.0,
                 most_recent_connections: Default::default(),
                 most_recent_temperatures: Default::default(),
+                recent_tokens: Default::default(),
             },
             back2front.1,
         ))
@@ -159,6 +161,10 @@ impl BlePool {
         self.most_recent_connections.iter()
     }
 
+    pub fn tokens(&self) -> impl Iterator<Item = &(RequestCreationHints, String)> {
+        self.recent_tokens.iter()
+    }
+
     /// Request an action asynchronously from the backend.
     ///
     /// The backend will probably send notifications back at some point.
@@ -171,8 +177,9 @@ impl BlePool {
 
     pub fn notify(&mut self, message: BackToFrontMessage) {
         match message {
-            UpdateDeviceList(list) => {
+            UpdateDeviceList(list, tokens) => {
                 self.most_recent_connections = list;
+                self.recent_tokens = tokens;
             }
             ReceivedTemperature(id, Some(temp)) => {
                 self.most_recent_temperatures.insert(id, temp);
@@ -300,7 +307,21 @@ impl BlePoolBackend {
             })
             .collect();
 
-        self.notify(UpdateDeviceList(new_list)).await;
+        let tokens = self
+            .tokens
+            .iter()
+            .map(|(rch, ath)| {
+                (
+                    rch.clone(),
+                    format!(
+                        "{}",
+                        hex::encode(&ath.access_token[ath.access_token.len() - 4..])
+                    ),
+                )
+            })
+            .collect();
+
+        self.notify(UpdateDeviceList(new_list, tokens)).await;
     }
 
     async fn run(
