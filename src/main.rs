@@ -308,14 +308,11 @@ impl Model {
                     // out
                 }
 
-                if let Some(token) = &con.access_token {
-                    sec_assoc = html! { <> { sec_assoc } <p>{ "Token: " }<tt>{ token }</tt></p> </> };
-                }
-
                 html! {
                     <li>
                         { operative }
                         { sec_assoc }
+                        <p>{ "Token: " }{ if let Some(token) = &con.access_token { html! { <tt>{ token }</tt> } } else { "none available".into() } }</p>
                         <p>{ "OSCORE: " }{ if con.oscore_established { "established" } else { "not established" } }</p>
                     </li>
                 }
