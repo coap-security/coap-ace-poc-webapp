@@ -26,7 +26,7 @@ impl PromiseExt for js_sys::Promise {
     }
 }
 
-type DeviceId = String;
+pub type DeviceId = String;
 type RequestCreationHints =
     ace_oscore_helpers::request_creation_hints::RequestCreationHints<String>;
 
@@ -61,6 +61,8 @@ pub enum FrontToBackMessage {
     SetIdle(DeviceId, u8),
 
     AddDeviceManually(RequestCreationHints),
+
+    Disconnect(DeviceId),
 }
 use FrontToBackMessage::*;
 
@@ -168,6 +170,10 @@ impl BlePool {
 
     pub fn set_idle(&mut self, device: DeviceId, level: u8) {
         self.request(SetIdle(device, level));
+    }
+
+    pub fn disconnect(&mut self, device: DeviceId) {
+        self.request(Disconnect(device));
     }
 
     pub fn add_device_manually(&mut self, rch: RequestCreationHints) {
@@ -435,6 +441,14 @@ impl BlePoolBackend {
                     let _ = self_.tokens.remove(&rch);
                     self_.notify_device_list().await;
                     self_.try_get_token(&rch).await;
+                }
+                Some(Disconnect(id)) => {
+                    if let Some(con) = self_.connections.remove(&id) {
+                        if let Some(gatt) = con.characteristic.service().device().gatt() {
+                            gatt.disconnect();
+                        }
+                        self_.notify_device_list().await;
+                    }
                 }
                 // Whatever spawned us doesn't want us any more
                 None => break,

@@ -16,6 +16,8 @@ use yew::prelude::*;
 mod authorizations;
 mod ble;
 
+use ble::DeviceId;
+
 pub mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
@@ -43,6 +45,8 @@ enum Message {
     Identify(String),
     /// User request to set a device's number of idle LEDs
     SetIdle(String, u8),
+    /// User request to close BLE connection to a device
+    Disconnect(DeviceId),
 
     /// Message from the BLE task. The message is passed on to the [Model::blepool] which can
     /// actually make sense of it. See [Model::link_ble_queue] for why the Receiver is there.
@@ -50,6 +54,7 @@ enum Message {
         futures::channel::mpsc::Receiver<ble::BackToFrontMessage>,
         ble::BackToFrontMessage,
     ),
+
     NoOp,
 
     /// Remove a URI from the list of currently logged-in-to ASes
@@ -147,6 +152,14 @@ impl Component for Model {
                     .as_mut()
                     .expect("Items were shown, so the pool should be here as well")
                     .set_idle(id, level);
+                false
+            }
+
+            Disconnect(id) => {
+                self.blepool
+                    .as_mut()
+                    .expect("Items were shown, so the pool should be here as well")
+                    .disconnect(id);
                 false
             }
 
@@ -273,6 +286,7 @@ impl Model {
                     let idle_dark = link.callback({let id = id.to_string(); move |_| SetIdle(id.clone(), 0)});
                     let idle_half = link.callback({let id = id.to_string(); move |_| SetIdle(id.clone(), 2)});
                     let idle_bright = link.callback({let id = id.to_string(); move |_| SetIdle(id.clone(), 4)});
+                    let disconnect = link.callback({let id = id.to_string(); move |_| Disconnect(id.clone())});
                     html! {
                         <>
                             <p>
@@ -287,6 +301,7 @@ impl Model {
                                 <button onclick={ idle_half }>{ "half" }</button>
                                 <button onclick={ idle_bright }>{ "bright" }</button>
                             </p>
+                            <p><button onclick={ disconnect }>{ "Disconnect" }</button></p>
                         </>
                     }
                 } else {
