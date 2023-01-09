@@ -221,11 +221,12 @@ impl Component for Model {
 }
 
 pub fn main() {
-    std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-
     console_log::init_with_level(log::Level::Debug).expect("Console not available for logging");
 
+    // Note that panics before this line would not be caugt, but it's not worth the confusion to
+    // pull in console_error_panic_hook just to get that feature one line earlier.
     yew::start_app::<Model>();
+    yew::set_custom_panic_hook(Box::new(console_error_panic_hook::hook));
 
     log::info!("App started.");
 
