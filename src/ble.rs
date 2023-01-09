@@ -35,8 +35,9 @@ type RequestCreationHints =
 pub struct DeviceDetails {
     /// ID needed to do actions on the device.
     ///
-    /// Absence indicates that the device is not connected.
+    /// Absence indicates that the device has never been connected.
     pub id: Option<DeviceId>,
+    pub is_connected: bool,
     /// User-visible name if provided at BLE level
     pub name: Option<String>,
     /// Claimed cryptographic identity
@@ -326,6 +327,7 @@ impl BlePoolBackend {
                 let con = self.connections.get(id);
                 DeviceDetails {
                     id: Some(id.to_string()),
+                    is_connected: con.is_some(),
                     name: con.and_then(|c| Some(c.name.as_ref()?.clone())),
                     rs_identity: rs_identity.cloned(),
                     login_uri: rs_identity
@@ -342,6 +344,7 @@ impl BlePoolBackend {
         new_list.extend(self.preseeded_rch.iter().map(|rch| {
             DeviceDetails {
                 id: None,
+                is_connected: false,
                 name: None,
                 rs_identity: Some(rch.clone()),
                 login_uri: self

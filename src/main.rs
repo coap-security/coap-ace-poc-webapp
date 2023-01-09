@@ -262,7 +262,9 @@ impl Model {
             Some(p) => html! { <ul class="devices">
             { for p.active_connections().map(|con| {
                 let name = con.name.as_deref().unwrap_or("(unnamed)");
-                let operative = if let Some(id) = con.id.as_ref() {
+                let operative = if con.is_connected {
+                    let id = con.id.as_ref().expect("Connected devices must have an ID");
+
                     let temp = p.latest_temperature(id)
                         .map(|t| format!("{t} °C"))
                         .unwrap_or_else(|| "unknown".to_string());
