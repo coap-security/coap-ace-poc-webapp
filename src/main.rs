@@ -271,6 +271,7 @@ impl Model {
                     let read_temp = link.callback({let id = id.to_string(); move |_| ReadTemperature(id.clone())});
                     let identify = link.callback({let id = id.to_string(); move |_| Identify(id.clone())});
                     let idle_dark = link.callback({let id = id.to_string(); move |_| SetIdle(id.clone(), 0)});
+                    let idle_half = link.callback({let id = id.to_string(); move |_| SetIdle(id.clone(), 2)});
                     let idle_bright = link.callback({let id = id.to_string(); move |_| SetIdle(id.clone(), 4)});
                     html! {
                         <>
@@ -283,6 +284,7 @@ impl Model {
                             </p>
                             <p>{ "Idle LED state: " }
                                 <button onclick={ idle_dark }>{ "dark" }</button>
+                                <button onclick={ idle_half }>{ "half" }</button>
                                 <button onclick={ idle_bright }>{ "bright" }</button>
                             </p>
                         </>
