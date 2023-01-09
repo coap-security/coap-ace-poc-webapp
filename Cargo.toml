@@ -48,6 +48,11 @@ getrandom = { version = "0.2", features = [ "js" ] }
 # Some dependency pulls in serde_cbor with no default features (std), someone else pulls in serde with default features (std), but these need to be aligned
 serde_cbor = "*"
 
+[build-dependencies]
+# Note that this works best when not doing shallow clones while git2 doesn't
+# support these; best disable shallow clones in CI.
+built = { version = "0.5.2", features = [ "git2" ] }
+
 [patch.crates-io]
 coset = { git = "https://github.com/chrysn-pull-requests/coset", branch = "oscore" }
 dcaf = { git = "https://github.com/chrysn-pull-requests/dcaf-rs", branch = "oscore" }

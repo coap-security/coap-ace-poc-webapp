@@ -15,6 +15,10 @@ use yew::prelude::*;
 
 mod ble;
 
+pub mod built_info {
+    include!(concat!(env!("OUT_DIR"), "/built.rs"));
+}
+
 /// Main application component
 ///
 /// This renders to the full application view, and hooks up its UI and network elements to receive
@@ -204,6 +208,13 @@ impl Component for Model {
                 <h2>{ "Devices" }</h2>
                 { bluetooth_button }
                 { bluetooth_list }
+                <footer>{ format!(
+                        "This is {} version {} (git {}{}).",
+                        built_info::PKG_NAME,
+                        built_info::PKG_VERSION,
+                        built_info::GIT_VERSION.unwrap_or("unknown"),
+                        built_info::GIT_DIRTY.and_then(|dirty| dirty.then_some("-dirty")).unwrap_or(""),
+                        ) }</footer>
             </div>
         }
     }
