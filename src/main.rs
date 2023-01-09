@@ -220,8 +220,6 @@ impl Component for Model {
                     <p><input type="submit" value="Add device manually" /></p>
                 </form>
                 </details>
-                <h2>{ "Tokens" }</h2>
-                { self.view_token_list(ctx) }
                 <h2>{ "Logins" }</h2>
                 { self.view_login_list(ctx) }
                 <footer>
@@ -254,16 +252,6 @@ impl Model {
                 })
             }</ul> }
         }
-    }
-
-    fn view_token_list(&self, ctx: &Context<Self>) -> Html {
-        let tokens = self.blepool.as_ref().map(|p| p.tokens());
-        let Some(tokens) = tokens else {
-            return html! { <></> };
-        };
-        html! { <ul> { for tokens.map(|(rch, token)| {
-        html! {<li>{ format!("{} for {} at {}", token, rch.audience, rch.as_uri) }</li>}
-        })} </ul> }
     }
 
     fn view_bluetooth_list(&self, ctx: &Context<Self>) -> Html {
@@ -314,6 +302,10 @@ impl Model {
                     }
                     // else, we'd need to take the as_uri and strip it out from our fragment to log
                     // out
+                }
+
+                if let Some(token) = &con.access_token {
+                    sec_assoc = html! { <> { sec_assoc } <p>{ "Token: " }<tt>{ token }</tt></p> </> };
                 }
 
                 html! {

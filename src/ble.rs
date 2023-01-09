@@ -43,6 +43,8 @@ pub struct DeviceDetails {
     pub rs_identity: Option<RequestCreationHints>,
     /// URI a failed attempt to abtain an OSCORE token from this RCH redirected to
     pub login_uri: Option<String>,
+    /// Short form of the access token obtained for that connection, if any
+    pub access_token: Option<String>,
     pub oscore_established: bool,
 }
 
@@ -66,7 +68,7 @@ pub enum BackToFrontMessage {
     /// The list of devices has changed
     ///
     /// (Alternatively, this could be expressed in a series of removals and and additions)
-    UpdateDeviceList(Vec<DeviceDetails>, Vec<(RequestCreationHints, String)>),
+    UpdateDeviceList(Vec<DeviceDetails>),
     /// A temperature reading was obtained from a device
     ReceivedTemperature(DeviceId, Option<f32>),
 }
@@ -83,7 +85,6 @@ pub struct BlePool {
     front2back: futures::channel::mpsc::Sender<FrontToBackMessage>,
     most_recent_connections: Vec<DeviceDetails>,
     most_recent_temperatures: std::collections::HashMap<DeviceId, f32>,
-    recent_tokens: Vec<(RequestCreationHints, String)>,
 }
 
 #[derive(Debug)]
@@ -147,7 +148,6 @@ impl BlePool {
                 front2back: front2back.0,
                 most_recent_connections: Default::default(),
                 most_recent_temperatures: Default::default(),
-                recent_tokens: Default::default(),
             },
             back2front.1,
         ))
@@ -181,10 +181,6 @@ impl BlePool {
         self.most_recent_connections.iter()
     }
 
-    pub fn tokens(&self) -> impl Iterator<Item = &(RequestCreationHints, String)> {
-        self.recent_tokens.iter()
-    }
-
     /// Request an action asynchronously from the backend.
     ///
     /// The backend will probably send notifications back at some point.
@@ -197,9 +193,8 @@ impl BlePool {
 
     pub fn notify(&mut self, message: BackToFrontMessage) {
         match message {
-            UpdateDeviceList(list, tokens) => {
+            UpdateDeviceList(list) => {
                 self.most_recent_connections = list;
-                self.recent_tokens = tokens;
             }
             ReceivedTemperature(id, Some(temp)) => {
                 self.most_recent_temperatures.insert(id, temp);
@@ -316,6 +311,13 @@ impl BlePoolBackend {
         ids.extend(self.connections.keys());
         ids.extend(self.rs_identities.keys());
 
+        fn present_token(atr: &dcaf::AccessTokenResponse) -> String {
+            format!(
+                "{}",
+                hex::encode(&atr.access_token[atr.access_token.len() - 4..])
+            )
+        }
+
         let mut new_list: Vec<_> = ids
             .iter()
             .map(|id| {
@@ -329,6 +331,9 @@ impl BlePoolBackend {
                     login_uri: rs_identity
                         .map(|i| &i.as_uri)
                         .and_then(|u| self.login_uris.get(u).map(|login| login.to_owned())),
+                    access_token: rs_identity
+                        .and_then(|rch| self.tokens.get(rch))
+                        .map(present_token),
                     oscore_established: self.security_contexts.contains_key(id),
                 }
             })
@@ -343,25 +348,12 @@ impl BlePoolBackend {
                     .login_uris
                     .get(rch.as_uri.as_str())
                     .map(|login| login.to_owned()),
+                access_token: self.tokens.get(rch).map(present_token),
                 oscore_established: false,
             }
         }));
 
-        let tokens = self
-            .tokens
-            .iter()
-            .map(|(rch, ath)| {
-                (
-                    rch.clone(),
-                    format!(
-                        "{}",
-                        hex::encode(&ath.access_token[ath.access_token.len() - 4..])
-                    ),
-                )
-            })
-            .collect();
-
-        self.notify(UpdateDeviceList(new_list, tokens)).await;
+        self.notify(UpdateDeviceList(new_list)).await;
     }
 
     async fn run(
@@ -426,6 +418,7 @@ impl BlePoolBackend {
                 Some(AddDeviceManually(rch)) => {
                     // FIXME: Maybe it's already present, and we should remove the token first?
                     self_.preseeded_rch.insert(rch.clone());
+                    self_.notify_device_list().await;
                     self_.try_get_token(&rch).await;
                 }
                 // Whatever spawned us doesn't want us any more
