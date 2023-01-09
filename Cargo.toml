@@ -23,8 +23,6 @@ instant = { version = "0.1.12", features = [ "wasm-bindgen" ] }
 dcaf = { version = "0.3.1", default-features = false }
 url = "2"
 
-hex-literal = "*"
-
 coap-message = "0.2.3"
 coap-gatt-utils = { git = "https://gitlab.com/oscore/coap-gatt-utils/" }
 coap-numbers = "0.2.0"

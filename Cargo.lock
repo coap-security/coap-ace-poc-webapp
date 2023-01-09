@@ -375,7 +375,6 @@ dependencies = [
  "getrandom",
  "gloo-net",
  "hex",
- "hex-literal",
  "instant",
  "js-sys",
  "liboscore",
