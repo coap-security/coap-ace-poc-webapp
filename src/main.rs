@@ -13,6 +13,7 @@
 
 use yew::prelude::*;
 
+mod authorizations;
 mod ble;
 
 pub mod built_info {
@@ -45,6 +46,9 @@ enum Message {
         ble::BackToFrontMessage,
     ),
     NoOp,
+
+    /// Remove a URI from the list of currently logged-in-to ASes
+    LogoutFrom(String),
 }
 use Message::*;
 
@@ -133,6 +137,15 @@ impl Component for Model {
                 false
             }
 
+            LogoutFrom(uri) => {
+                web_sys::window()
+                    .unwrap()
+                    .location()
+                    .set_href(&authorizations::link_for_removal(&uri))
+                    .unwrap();
+                true
+            }
+
             NoOp => false,
         }
     }
@@ -209,6 +222,8 @@ impl Component for Model {
                 <h2>{ "Devices" }</h2>
                 { bluetooth_button }
                 { bluetooth_list }
+                <h2>{ "Logins" }</h2>
+                { self.view_login_list(ctx) }
                 <footer>
                     {"This is "}
                     <a href={built_info::PKG_REPOSITORY}>{ built_info::PKG_NAME }</a>
@@ -219,6 +234,25 @@ impl Component for Model {
                         built_info::GIT_DIRTY.and_then(|dirty| dirty.then_some("-dirty")).unwrap_or(""),
                         ) }</footer>
             </div>
+        }
+    }
+}
+
+impl Model {
+    fn view_login_list(&self, ctx: &Context<Self>) -> Html {
+        let link = ctx.link();
+        let list = authorizations::current_authorizations();
+        if list.is_empty() {
+            html! { <p>{ "Logins will be added automatically as required to obtain tokens." }</p> }
+        } else {
+            html! { <ul>{
+                for list.iter().map(|(uri, _)| {
+                    // FIXME Some of this cloning is necessary due to link.callback taking a Fn
+                    // rather than a FnOnce, but some might be avoided
+                    let uri2 = uri.clone();
+                    html! { <li>{ uri.clone() }{ " " }<button onclick={link.callback(move |_| LogoutFrom(uri2.clone()))}>{ "Logout" }</button></li> }
+                })
+            }</ul> }
         }
     }
 }

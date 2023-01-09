@@ -728,37 +728,10 @@ impl BlePoolBackend {
     }
 
     /// For a given token path, find any Authorization value we have available
-    ///
-    /// For this particular very stateless application, this is passed around in the URI
     fn http_authorization_for(&self, token_uri: &str) -> Option<String> {
-        let hash = web_sys::window()
-            .expect("This is running inside a web browser")
-            .location()
-            .hash()
-            .unwrap();
-        for part in hash.split('#') {
-            if part.is_empty() {
-                continue;
-            }
-            match (|| {
-                let mut components = part.split(';');
-                let part_token_uri = components.next()?;
-                let part_authorization = components.next()?;
-
-                Some(if token_uri == part_token_uri {
-                    // FIXME: Do full escaping (but this precise handling is suitable only for the
-                    // demo anyway)
-                    Some(part_authorization.replace("%20", " "))
-                } else {
-                    None
-                })
-            })() {
-                Some(Some(token)) => return Some(token),
-                Some(None) => continue,
-                None => {
-                    log::warn!("Ignoring malformed fragment componet {:?}", part);
-                    continue;
-                }
+        for (uri, authorization) in crate::authorizations::current_authorizations() {
+            if token_uri == uri {
+                return Some(authorization);
             }
         }
         None
