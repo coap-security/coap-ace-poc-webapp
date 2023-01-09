@@ -164,9 +164,52 @@ impl Component for Model {
             }
         };
 
+        html! {
+            <div>
+                <h1>{ "CoAP ACE PoC: The App" }</h1>
+                <p id="crashreport" style="display:none">{ "This application has crashed, this is a bug. Additional details are available in the browser's console, please report them at " }<a href={built_info::PKG_REPOSITORY}>{ "the application's source" }</a>{ "." } </p>
+                <h2>{ "Devices" }</h2>
+                { bluetooth_button }
+                { self.view_bluetooth_list(ctx) }
+                <h2>{ "Logins" }</h2>
+                { self.view_login_list(ctx) }
+                <footer>
+                    {"This is "}
+                    <a href={built_info::PKG_REPOSITORY}>{ built_info::PKG_NAME }</a>
+                    { format!(
+                        " version {} (git {}{}).",
+                        built_info::PKG_VERSION,
+                        built_info::GIT_VERSION.unwrap_or("unknown"),
+                        built_info::GIT_DIRTY.and_then(|dirty| dirty.then_some("-dirty")).unwrap_or(""),
+                        ) }</footer>
+            </div>
+        }
+    }
+}
+
+impl Model {
+    fn view_login_list(&self, ctx: &Context<Self>) -> Html {
+        let link = ctx.link();
+        let list = authorizations::current_authorizations();
+        if list.is_empty() {
+            html! { <p>{ "Logins will be added automatically as required to obtain tokens." }</p> }
+        } else {
+            html! { <ul>{
+                for list.iter().map(|(uri, _)| {
+                    // FIXME Some of this cloning is necessary due to link.callback taking a Fn
+                    // rather than a FnOnce, but some might be avoided
+                    let uri2 = uri.clone();
+                    html! { <li>{ uri.clone() }{ " " }<button onclick={link.callback(move |_| LogoutFrom(uri2.clone()))}>{ "Logout" }</button></li> }
+                })
+            }</ul> }
+        }
+    }
+
+    fn view_bluetooth_list(&self, ctx: &Context<Self>) -> Html {
+        let link = ctx.link();
         let current_address = web_sys::window().unwrap().location().href().unwrap();
 
-        let bluetooth_list = match &self.blepool {
+        match &self.blepool {
             Some(p) => html! { <ul class="devices">
             { for p.active_connections().map(|con| {
                 let name = con.name.as_deref().unwrap_or("(unnamed)");
@@ -213,46 +256,6 @@ impl Component for Model {
             }) }
             </ul> },
             None => html! { <p>{ "Bluetooth not available in this browser" }</p> },
-        };
-
-        html! {
-            <div>
-                <h1>{ "CoAP ACE PoC: The App" }</h1>
-                <p id="crashreport" style="display:none">{ "This application has crashed, this is a bug. Additional details are available in the browser's console, please report them at " }<a href={built_info::PKG_REPOSITORY}>{ "the application's source" }</a>{ "." } </p>
-                <h2>{ "Devices" }</h2>
-                { bluetooth_button }
-                { bluetooth_list }
-                <h2>{ "Logins" }</h2>
-                { self.view_login_list(ctx) }
-                <footer>
-                    {"This is "}
-                    <a href={built_info::PKG_REPOSITORY}>{ built_info::PKG_NAME }</a>
-                    { format!(
-                        " version {} (git {}{}).",
-                        built_info::PKG_VERSION,
-                        built_info::GIT_VERSION.unwrap_or("unknown"),
-                        built_info::GIT_DIRTY.and_then(|dirty| dirty.then_some("-dirty")).unwrap_or(""),
-                        ) }</footer>
-            </div>
-        }
-    }
-}
-
-impl Model {
-    fn view_login_list(&self, ctx: &Context<Self>) -> Html {
-        let link = ctx.link();
-        let list = authorizations::current_authorizations();
-        if list.is_empty() {
-            html! { <p>{ "Logins will be added automatically as required to obtain tokens." }</p> }
-        } else {
-            html! { <ul>{
-                for list.iter().map(|(uri, _)| {
-                    // FIXME Some of this cloning is necessary due to link.callback taking a Fn
-                    // rather than a FnOnce, but some might be avoided
-                    let uri2 = uri.clone();
-                    html! { <li>{ uri.clone() }{ " " }<button onclick={link.callback(move |_| LogoutFrom(uri2.clone()))}>{ "Logout" }</button></li> }
-                })
-            }</ul> }
         }
     }
 }
