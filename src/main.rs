@@ -361,7 +361,7 @@ pub fn main() {
     log::info!("App started.");
 
     do_oscore_test().unwrap();
-    log::info!("OSCORE tests passed");
+    log::info!("OSCORE self-tests passed");
 }
 
 pub fn do_oscore_test() -> Result<(), &'static str> {

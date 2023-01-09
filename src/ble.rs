@@ -242,7 +242,7 @@ impl BlePoolBackend {
         .map_err(|_| "No device actually selected")?;
 
         let device: web_sys::BluetoothDevice = device.into();
-        log::info!("New device: {:?}, {:?}...", device.id(), device.name());
+        log::info!("New device: {:?} ({:?})", device.name(), device.id());
 
         // FIXME: do all the "device goes away" stuff properly (but right now we don't need it for
         // the essential demo)
@@ -287,7 +287,7 @@ impl BlePoolBackend {
             log::info!("Device does not suport notification / indication. That's fine, it won't be sending requests or support observations anyway.");
         }
 
-        log::info!("... actually made it through");
+        log::info!("Device supports CoAP-over-GATT.");
 
         let id = device.id();
 
@@ -473,7 +473,7 @@ impl BlePoolBackend {
         // FIXME: Maybe change coap_gatt_utils so this nees less patching?
         let carry = carry.expect("write always invokes the writer");
 
-        log::debug!("Writing to charcteristic with length {}", request.len());
+        log::debug!("Writing request: {} bytes", request.len());
 
         let result = connection
             .characteristic
@@ -506,6 +506,7 @@ impl BlePoolBackend {
             let response = js_sys::Uint8Array::new(&response.buffer()).to_vec();
 
             if response.len() > 0 {
+                log::debug!("Read response: {} bytes", response.len());
                 break response;
             }
 
@@ -633,7 +634,11 @@ impl BlePoolBackend {
             },
             |response, ()| {
                 use coap_message::ReadableMessage;
-                log::info!("Time written, code {:?}", response.code());
+                log::info!(
+                    "Time written, code {}.{:02}",
+                    response.code() >> 5,
+                    response.code() & 0x1f
+                );
             },
         )
         .await
@@ -807,7 +812,7 @@ impl BlePoolBackend {
                         return Err("Left-over elements");
                     }
 
-                    log::info!("authz-info response {:?}", response);
+                    log::debug!("Response obtained from authz-info: server recipient ID {server_recipient_id:?}, nonce2 {nonce2:?}");
 
                     Ok((nonce2.into_vec(), server_recipient_id.into_vec()))
                 } else {
@@ -943,16 +948,14 @@ impl BlePoolBackend {
             // Prerequisite missing, can't help it
             return;
         };
-        log::info!(
-            "Trying to establish a security context with {:?} using token {:?}",
-            rs_identity,
-            token_response
-        );
+        log::info!("Trying to establish a security context.");
+        log::debug!("Token: {token_response:?}");
+
         // FIXME: This could be avoided if we didn't use &mut so often during requesting (but we do
         // need exclusvie access to one of the security contexts).
         let token_response = token_response.clone();
         let Some(dcaf::ProofOfPossessionKey::OscoreInputMaterial(material)) = &token_response.cnf.as_ref() else {
-            // It's a token we can't use ... weird, but we can't help it.
+            log::error!("Token is unusable for the ACE OSCORE profile");
             return;
         };
 
@@ -973,8 +976,6 @@ impl BlePoolBackend {
             .await
         {
             Ok((nonce2, server_recipient_id)) => {
-                log::info!("Should derive using {nonce2:?} and {server_recipient_id:?}");
-
                 let context = ace_oscore_helpers::oscore_claims::derive(
                     material,
                     nonce1,
@@ -984,11 +985,7 @@ impl BlePoolBackend {
                 )
                 .unwrap();
 
-                log::info!(
-                    "Derived context {:?} now to be used with {:?}",
-                    &context,
-                    &id
-                );
+                log::info!("Derived OSCORE context now to be used with {id:?}");
                 self.security_contexts.insert(id.to_string(), context);
                 self.notify_device_list().await;
             }
