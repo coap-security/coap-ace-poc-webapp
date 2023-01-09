@@ -209,9 +209,11 @@ impl Component for Model {
                 <h2>{ "Devices" }</h2>
                 { bluetooth_button }
                 { bluetooth_list }
-                <footer>{ format!(
-                        "This is {} version {} (git {}{}).",
-                        built_info::PKG_NAME,
+                <footer>
+                    {"This is "}
+                    <a href={built_info::PKG_REPOSITORY}>{ built_info::PKG_NAME }</a>
+                    { format!(
+                        " version {} (git {}{}).",
                         built_info::PKG_VERSION,
                         built_info::GIT_VERSION.unwrap_or("unknown"),
                         built_info::GIT_DIRTY.and_then(|dirty| dirty.then_some("-dirty")).unwrap_or(""),
