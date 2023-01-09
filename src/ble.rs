@@ -367,8 +367,10 @@ impl BlePoolBackend {
                                 Err(e) => log::error!("Failed to write time: {}", e),
                             }
 
-                            self_.try_get_rch(&id).await;
-                            self_.try_get_token(&id).await;
+                            let rch = self_.try_get_rch(&id).await;
+                            if let Some(rch) = rch {
+                                self_.try_get_token(&rch).await;
+                            }
                             self_.try_establish_security_context(&id).await;
                         }
                         Err(e) => {
@@ -468,8 +470,10 @@ impl BlePoolBackend {
         write_request: impl FnOnce(&mut liboscore::ProtectedMessage) -> CARRY,
         read_response: impl FnOnce(&liboscore::ProtectedMessage, CARRY) -> R,
     ) -> Result<R, &'static str> {
-        self.try_get_rch(id).await;
-        self.try_get_token(id).await;
+        let rch = self.try_get_rch(id).await;
+        if let Some(rch) = rch {
+            self.try_get_token(&rch).await;
+        };
         self.try_establish_security_context(id).await;
 
         // While we process this, no other access to the context is possible. That's kind of
@@ -747,10 +751,12 @@ impl BlePoolBackend {
     }
 
     /// Try to determine the audience value of a given peer.
-    async fn try_get_rch(&mut self, id: &str) {
-        if self.rs_identities.get(id).is_some() {
+    ///
+    /// FIXME: This should be less clone-y.
+    async fn try_get_rch<'a>(&'a mut self, id: &'a str) -> Option<RequestCreationHints> {
+        if let Some(rch) = self.rs_identities.get(id) {
             // All is fine already
-            return;
+            return Some(rch.clone());
         }
 
         let response = self.prod_temperature(&id).await;
@@ -760,6 +766,8 @@ impl BlePoolBackend {
             self.rs_identities.insert(id.to_string(), rs_identity);
             self.notify_device_list().await;
         }
+
+        self.rs_identities.get(id).cloned()
     }
 
     /// For a given token path, find any Authorization value we have available
@@ -775,11 +783,7 @@ impl BlePoolBackend {
     /// Try to fetch a token from the AS for the audience the RS claimed to be
     ///
     /// Currently fails silently if there is no rs_identities entry.
-    async fn try_get_token(&mut self, id: &str) {
-        let Some(rch) = self.rs_identities.get(id) else {
-            // Prerequisite missing, can't help it
-            return;
-        };
+    async fn try_get_token(&mut self, rch: &RequestCreationHints) {
         if self.tokens.contains_key(rch) {
             // All is fine already
             return;
