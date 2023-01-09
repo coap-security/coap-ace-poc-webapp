@@ -289,7 +289,7 @@ pub fn main() {
 
     // Note that panics before this line would not be caugt, but it's not worth the confusion to
     // pull in console_error_panic_hook just to get that feature one line earlier.
-    yew::start_app::<Model>();
+    yew::Renderer::<Model>::new().render();
     yew::set_custom_panic_hook(Box::new(panic));
 
     log::info!("App started.");

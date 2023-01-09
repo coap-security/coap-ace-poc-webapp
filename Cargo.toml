@@ -9,7 +9,7 @@ repository = "https://gitlab.com/oscore/coap-ace-poc-webapp/"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-yew = "^0.19.3"
+yew = { version = "^0.20", features = [ "csr" ] }
 gloo-net = { version = "0.2.4", features = [ "websocket" ] }
 console_error_panic_hook = "^0.1.7"
 log = "^0.4"
