@@ -41,5 +41,9 @@ pub fn link_for_removal(uri: &str) -> String {
         result.push_str(";");
         result.push_str(a);
     }
+    if result.is_empty() {
+        // So it doesn't result in a refresh
+        result.push_str("#");
+    }
     result
 }
