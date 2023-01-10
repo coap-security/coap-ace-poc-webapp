@@ -3,3 +3,7 @@ h1 { color: navy; }
 h2 { color: navy; }
 #crashreport { border: medium solid red; padding: 0.5em; }
 footer { padding-top: 1em; margin-top: 1em; border-top: solid thin silver; font-size: smaller; }
+fieldset { display: table; margin: 0.3em; padding: 0; border: none; }
+fieldset p { display: table-row; }
+fieldset label { display: table-cell; padding-right: 0.3em; }
+fieldset input { display: table-cell; }

@@ -243,6 +243,7 @@ impl Component for Model {
                 // The "action" is a workaround for submit link callbacks apparently not being
                 // cancellable through yew
                 <form onsubmit={ link.callback(|_| ManualDeviceRequest ) } action="javascript:;">
+                    <fieldset>
                     <p>
                         <label for="input_as_uri">{ "AS URI:" }</label>{ " " }
                         <input type="url" id="input_as_uri" value={ self.manual_device_as_uri.clone() } onchange={ link.callback(|e: Event| SetManualDeviceAsUri(e.target_unchecked_into::<web_sys::HtmlInputElement>().value())) } />
@@ -251,6 +252,7 @@ impl Component for Model {
                         <label for="input_audience">{ "Audience:" }</label>{ " " }
                         <input type="text" id="input_audience" value={ self.manual_device_audience.clone() } onchange={ link.callback(|e: Event| SetManualDeviceAudience(e.target_unchecked_into::<web_sys::HtmlInputElement>().value())) } />
                     </p>
+                    </fieldset>
                     <p><input type="submit" value="Add device manually" /></p>
                 </form>
                 </details>
