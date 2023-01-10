@@ -3,6 +3,9 @@ pages:
   script:
     # That libc6-dev-i386 fixes things indicates trouble somewhere else, but
     # things do pass tests with that.
+    # Also, we need libclang-14-dev 1:14.0.6-9 (or one of the packages in its
+    # version-locked cluster) to make use of that.
+    - echo 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20221224 bookworm main' > /etc/apt/sources.list
     - apt-get update && apt-get install -y curl git libclang-dev clang libc6-dev-i386 pkg-config libssl-dev
     - "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain nightly"
     - source "$HOME/.cargo/env"
