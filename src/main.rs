@@ -458,13 +458,3 @@ pub fn do_oscore_test() -> Result<(), &'static str> {
 
     Ok(())
 }
-
-#[no_mangle]
-pub unsafe extern "C" fn abort() {
-    panic!("Abort called from C");
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn __assert_fail(_: i32, _: i32, _: i32, _: i32) {
-    panic!("Assert failed in C");
-}
