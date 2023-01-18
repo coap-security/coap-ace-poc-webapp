@@ -213,7 +213,14 @@ impl BlePool {
     /// created in `new()` into this function.
     pub fn notify(&mut self, message: BackToFrontMessage) {
         match message {
-            UpdateDeviceList(list) => {
+            UpdateDeviceList(mut list) => {
+                fn key(i: &DeviceDetails) -> (Option<&String>, Option<&String>) {
+                    (
+                        i.id.as_ref(),
+                        i.rs_identity.as_ref().map(|rch| &rch.audience),
+                    )
+                }
+                list.sort_by(|a, b| key(a).cmp(&key(b)));
                 self.most_recent_connections = list;
             }
             ReceivedTemperature(id, Some(temp)) => {
