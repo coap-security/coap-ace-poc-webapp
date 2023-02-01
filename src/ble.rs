@@ -49,7 +49,8 @@ pub struct DeviceDetails {
     pub oscore_established: bool,
 }
 
-/// Messages emitted by yew through the [BlePool], directing the BLE main loop in the [BlePoolBackned]
+/// Messages emitted by yew through the [BlePool], directing the BLE main loop in the
+/// [BlePoolBackend]
 #[derive(Debug)]
 pub enum FrontToBackMessage {
     /// Probe for any available device
