@@ -225,10 +225,10 @@ impl Component for Model {
 
         let bluetooth_button = match has_bluetooth {
             true => {
-                html! { <button onclick={link.callback(|_| ScanBle)}>{ "Add device" }</button> }
+                html! { <button onclick={link.callback(|_| ScanBle)}>{ "Search nearby devices" }</button> }
             }
             false => {
-                html! { <button disabled=true title="Bluetooth not available in this browser">{ "Add device" }</button> }
+                html! { <button disabled=true title="Bluetooth not available in this browser">{ "Search nearby devices" }</button> }
             }
         };
 
@@ -239,7 +239,7 @@ impl Component for Model {
                 <h2>{ "Devices" }</h2>
                 { bluetooth_button }
                 { self.view_bluetooth_list(ctx) }
-                <details><summary>{ "Add device manually" }</summary>
+                <details><summary>{ "Request token manually" }</summary>
                 // The "action" is a workaround for submit link callbacks apparently not being
                 // cancellable through yew
                 <form onsubmit={ link.callback(|_| ManualDeviceRequest ) } action="javascript:;">
@@ -253,7 +253,7 @@ impl Component for Model {
                         <input type="text" id="input_audience" value={ self.manual_device_audience.clone() } onchange={ link.callback(|e: Event| SetManualDeviceAudience(e.target_unchecked_into::<web_sys::HtmlInputElement>().value())) } />
                     </p>
                     </fieldset>
-                    <p><input type="submit" value="Add device manually" /></p>
+                    <p><input type="submit" value="Request token manually" /></p>
                 </form>
                 </details>
                 <h2>{ "Logins" }</h2>
