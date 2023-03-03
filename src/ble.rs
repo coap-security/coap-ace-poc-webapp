@@ -871,8 +871,9 @@ impl BlePoolBackend {
 
     /// For a given token path, find any Authorization value we have available
     fn http_authorization_for(&self, token_uri: &str) -> Option<String> {
-        for (uri, authorization) in crate::authorizations::current_authorizations() {
+        for (uri, authorization, _) in crate::authorizations::current_authorizations() {
             if token_uri == uri {
+                // which would be None where we're not logged in, and that's fine
                 return Some(authorization);
             }
         }

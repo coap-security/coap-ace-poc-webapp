@@ -280,11 +280,11 @@ impl Model {
             html! { <p>{ "Logins will be added automatically as required to obtain tokens." }</p> }
         } else {
             html! { <ul>{
-                for list.iter().map(|(uri, _)| {
+                for list.iter().map(|(uri, _, descr)| {
                     // FIXME Some of this cloning is necessary due to link.callback taking a Fn
                     // rather than a FnOnce, but some might be avoided
                     let uri2 = uri.clone();
-                    html! { <li>{ uri.clone() }{ " " }<button onclick={link.callback(move |_| LogoutFrom(uri2.clone()))}>{ "Logout" }</button></li> }
+                    html! { <li>{ uri.clone() }{ descr.as_ref().map(|d| format!(" (as {}) ", d)).unwrap_or(" ".to_string()) }<button onclick={link.callback(move |_| LogoutFrom(uri2.clone()))}>{ "Logout" }</button></li> }
                 })
             }</ul> }
         }
