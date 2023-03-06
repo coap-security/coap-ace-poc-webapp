@@ -277,18 +277,26 @@ impl Component for Model {
 impl Model {
     fn view_login_list(&self, ctx: &Context<Self>) -> Html {
         let link = ctx.link();
-        let list = authorizations::current_authorizations();
-        if list.is_empty() {
+        let logins = authorizations::current_authorizations();
+        let known_as = authorizations::known_as_not_logged_in();
+        if logins.is_empty() && known_as.is_empty() {
             html! { <p>{ "Logins will be added automatically as required to obtain tokens." }</p> }
         } else {
-            html! { <ul>{
-                for list.iter().map(|(uri, _, descr)| {
+            html! {
+                <>
+                <ul>{ for logins.iter().map(|(uri, _, descr)| {
                     // FIXME Some of this cloning is necessary due to link.callback taking a Fn
                     // rather than a FnOnce, but some might be avoided
                     let uri2 = uri.clone();
                     html! { <li>{ uri.clone() }{ descr.as_ref().map(|d| format!(" (as {}) ", d)).unwrap_or(" ".to_string()) }<button onclick={link.callback(move |_| LogoutFrom(uri2.clone()))}>{ "Logout" }</button></li> }
                 })
-            }</ul> }
+                }</ul>
+                <ul>{ for known_as.iter().filter_map(|tu| authorizations::build_login_uri(tu).ok()).map(|(full_href, display_uri)| {
+                    html! { <li><a href={ full_href }>{ "Login" }</a>{ " to " }{ &display_uri }</li> }
+                })
+                }</ul>
+                </>
+            }
         }
     }
 
