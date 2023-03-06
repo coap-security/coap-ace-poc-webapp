@@ -373,6 +373,7 @@ dependencies = [
  "dcaf",
  "futures",
  "getrandom",
+ "gloo-events",
  "gloo-net",
  "hex",
  "instant",

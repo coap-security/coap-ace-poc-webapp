@@ -11,6 +11,7 @@ repository = "https://gitlab.com/oscore/coap-ace-poc-webapp/"
 [dependencies]
 yew = { version = "^0.20", features = [ "csr" ] }
 gloo-net = { version = "0.2.4", features = [ "websocket" ] }
+gloo-events = "0.1.2"
 console_error_panic_hook = "^0.1.7"
 log = "^0.4"
 console_log = "^0.2"

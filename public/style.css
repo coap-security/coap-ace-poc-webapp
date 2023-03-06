@@ -2,8 +2,29 @@ html { font-family: sans-serif; }
 h1 { color: navy; }
 h2 { color: navy; }
 #crashreport { border: medium solid red; padding: 0.5em; }
-footer { padding-top: 1em; margin-top: 1em; border-top: solid thin silver; font-size: smaller; }
+footer { padding-top: 0.5em; margin-top: 1em; border-top: solid thin silver; font-size: smaller; }
 fieldset { display: table; margin: 0.3em; padding: 0; border: none; }
 fieldset p { display: table-row; }
 fieldset label { display: table-cell; padding-right: 0.3em; }
 fieldset input { display: table-cell; }
+
+.network.blocked { animation: 2s blink-red; }
+.network.blocked2 { animation: 2s blink2-red; }
+.network.allowed { animation: 2s blink-green; }
+.network.allowed2 { animation: 2s blink2-green; }
+@keyframes blink-red {
+    5% { color: red; }
+    40% { color: red; }
+}
+@keyframes blink-green {
+    5% { color: green; }
+    40% { color: green; }
+}
+@keyframes blink2-red {
+    5% { color: red; }
+    40% { color: red; }
+}
+@keyframes blink2-green {
+    5% { color: green; }
+    40% { color: green; }
+}

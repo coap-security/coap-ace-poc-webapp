@@ -45,6 +45,7 @@ pub struct DeviceDetails {
 pub enum MissingTokenReason {
     Unauthorized,
     ServerUnavailable,
+    ForcedOffline,
 }
 
 /// Messages emitted by yew through the [BlePool], directing the BLE main loop in the
@@ -67,6 +68,8 @@ pub enum FrontToBackMessage {
     /// Remove a BLE device (but not any credentials associated with it) from the list, and
     /// ask the browser to disconnect it.
     Disconnect(DeviceId),
+
+    SetForceOffline(bool),
 }
 use FrontToBackMessage::*;
 
@@ -76,11 +79,21 @@ pub enum BackToFrontMessage {
     /// The list of devices has changed
     ///
     /// (Alternatively, this could be expressed in a series of removals and and additions)
-    UpdateDeviceList(Vec<DeviceDetails>),
+    ///
+    /// The NetworkActivity report is purely for visualization in the demo, and would be removed
+    /// without replacement in production applications (or replaced with logging).
+    UpdateDeviceList((Vec<DeviceDetails>, Option<NetworkActivity>)),
     /// A temperature reading was obtained from a device
     ReceivedTemperature(DeviceId, Option<f32>),
 }
 use BackToFrontMessage::*;
+
+/// Visualization hints for network activity, emitted along the device list
+#[derive(Debug)]
+pub enum NetworkActivity {
+    Success,
+    Failure,
+}
 
 /// The yew-side part of the BLE pool. It is owned by the front end task, and keeps copies of
 /// everything it can't synchronously obtain from the backend. It has synchronous accessors (which
@@ -93,6 +106,13 @@ pub struct BlePool {
     front2back: futures::channel::mpsc::Sender<FrontToBackMessage>,
     most_recent_connections: Vec<DeviceDetails>,
     most_recent_temperatures: std::collections::HashMap<DeviceId, f32>,
+
+    /// Counter from which CSS visualizations can be derived
+    pub network_successes: usize,
+    /// Counter from which CSS visualizations can be derived
+    pub network_failures: usize,
+    /// Flag to indicate which CSS visualization to pick
+    pub last_network_was_success: Option<bool>,
 }
 
 /// Error type indicating browsers without WebBluetooth support
@@ -142,6 +162,12 @@ struct BlePoolBackend {
     tokens: std::collections::HashMap<RequestCreationHints, TokenStatus>,
     /// Established security contexts
     security_contexts: std::collections::HashMap<DeviceId, liboscore::PrimitiveContext>,
+
+    /// Override from the front-end to not attempt token requests
+    ///
+    /// This only makes sense in a demo; in production code, this would be ripped out without
+    /// replacement.
+    force_offline: bool,
 }
 
 /// A BLE characteristic (from which the device, GATT and other JavaScript components can be
@@ -181,6 +207,10 @@ impl BlePool {
                 front2back: front2back.0,
                 most_recent_connections: Default::default(),
                 most_recent_temperatures: Default::default(),
+
+                network_successes: 0,
+                network_failures: 0,
+                last_network_was_success: None,
             },
             back2front.1,
         ))
@@ -234,7 +264,7 @@ impl BlePool {
     /// created in `new()` into this function.
     pub fn notify(&mut self, message: BackToFrontMessage) {
         match message {
-            UpdateDeviceList(mut list) => {
+            UpdateDeviceList((mut list, network_activity)) => {
                 fn key(i: &DeviceDetails) -> (Option<&String>, Option<&String>) {
                     (
                         i.id.as_ref(),
@@ -243,6 +273,18 @@ impl BlePool {
                 }
                 list.sort_by(|a, b| key(a).cmp(&key(b)));
                 self.most_recent_connections = list;
+
+                match network_activity {
+                    Some(NetworkActivity::Success) => {
+                        self.network_successes = self.network_successes.wrapping_add(1);
+                        self.last_network_was_success = Some(true);
+                    }
+                    Some(NetworkActivity::Failure) => {
+                        self.network_failures = self.network_failures.wrapping_add(1);
+                        self.last_network_was_success = Some(false);
+                    }
+                    None => (),
+                }
             }
             ReceivedTemperature(id, Some(temp)) => {
                 self.most_recent_temperatures.insert(id, temp);
@@ -251,6 +293,10 @@ impl BlePool {
                 self.most_recent_temperatures.remove(&id);
             }
         }
+    }
+
+    pub fn set_force_offline(&mut self, force_offline: bool) {
+        self.request(SetForceOffline(force_offline));
     }
 }
 
@@ -353,7 +399,7 @@ impl BlePoolBackend {
         let _ = self.back2front.send(msg).await;
     }
 
-    async fn notify_device_list(&mut self) {
+    async fn notify_device_list(&mut self, network_activity: Option<NetworkActivity>) {
         // Doing this through a new map is inefficient compared to making all things keyed by id be
         // a BTreeMap and mergesorting them, or to using a single map with many optional values.
         let mut ids = std::collections::HashSet::new();
@@ -399,7 +445,8 @@ impl BlePoolBackend {
             }
         }));
 
-        self.notify(UpdateDeviceList(new_list)).await;
+        self.notify(UpdateDeviceList((new_list, network_activity)))
+            .await;
     }
 
     async fn run(
@@ -415,6 +462,7 @@ impl BlePoolBackend {
             preseeded_rch: Default::default(),
             tokens: Default::default(),
             security_contexts: Default::default(),
+            force_offline: false,
         };
 
         loop {
@@ -425,7 +473,7 @@ impl BlePoolBackend {
                 Some(FindAnyDevice) => {
                     match self_.try_connect(&bluetooth).await {
                         Ok(id) => {
-                            self_.notify_device_list().await;
+                            self_.notify_device_list(None).await;
                             match self_.write_time(&id).await {
                                 Ok(()) => (),
                                 Err(e) => log::error!("Failed to write time: {}", e),
@@ -475,7 +523,7 @@ impl BlePoolBackend {
                         self_.preseeded_rch.insert(rch.clone());
                     };
                     let _ = self_.tokens.remove(&rch);
-                    self_.notify_device_list().await;
+                    self_.notify_device_list(None).await;
                     self_.try_get_token(&rch).await;
                 }
                 Some(Disconnect(id)) => {
@@ -483,8 +531,11 @@ impl BlePoolBackend {
                         if let Some(gatt) = con.characteristic.service().device().gatt() {
                             gatt.disconnect();
                         }
-                        self_.notify_device_list().await;
+                        self_.notify_device_list(None).await;
                     }
+                }
+                Some(SetForceOffline(force_offline)) => {
+                    self_.force_offline = force_offline;
                 }
                 // Whatever spawned us doesn't want us any more
                 None => break,
@@ -522,7 +573,7 @@ impl BlePoolBackend {
             Err(e) => {
                 log::error!("Request could not be sent ({:?}), removing connection", e);
                 self.connections.remove(id);
-                self.notify_device_list().await;
+                self.notify_device_list(None).await;
                 return Err("Failed to send request");
             }
         };
@@ -534,7 +585,7 @@ impl BlePoolBackend {
                 Err(e) => {
                     log::error!("Response could not be read ({:?}), removing connection", e);
                     self.connections.remove(id);
-                    self.notify_device_list().await;
+                    self.notify_device_list(None).await;
                     return Err("Failed to read response");
                 }
             };
@@ -643,7 +694,7 @@ impl BlePoolBackend {
                 panic!("There can't be a security context on an unknown device");
             };
             self.tokens.remove(&rch);
-            self.notify_device_list().await;
+            self.notify_device_list(None).await;
         }
 
         user_response
@@ -877,7 +928,7 @@ impl BlePoolBackend {
             // If we don't get any, it's probably game over here, but no
             // reason to crash
             self.rs_identities.insert(id.to_string(), rs_identity);
-            self.notify_device_list().await;
+            self.notify_device_list(None).await;
         }
 
         self.rs_identities.get(id).cloned()
@@ -908,6 +959,14 @@ impl BlePoolBackend {
             return;
         };
 
+        if self.force_offline {
+            self.tokens
+                .insert(rch.clone(), Failed(MissingTokenReason::ForcedOffline));
+            self.notify_device_list(Some(NetworkActivity::Failure))
+                .await;
+            return;
+        }
+
         log::info!("Trying to get a token...");
         use web_sys::{Request, RequestCredentials, RequestInit, RequestMode, Response};
 
@@ -927,7 +986,7 @@ impl BlePoolBackend {
         let Ok(request) = Request::new_with_str_and_init(&rch.as_uri, &opts) else {
             // More like "Browser can't even figure out how server would be reached"
             self.tokens.insert(rch.clone(), Failed(MissingTokenReason::ServerUnavailable));
-            self.notify_device_list().await;
+            self.notify_device_list(Some(NetworkActivity::Failure)).await;
             return
         };
 
@@ -938,7 +997,7 @@ impl BlePoolBackend {
         let window = web_sys::window().expect("Running in a browser");
         let Ok(resp_value) = window.fetch_with_request(&request).js2rs().await else {
             self.tokens.insert(rch.clone(), Failed(MissingTokenReason::ServerUnavailable));
-            self.notify_device_list().await;
+            self.notify_device_list(Some(NetworkActivity::Failure)).await;
             return
         };
 
@@ -947,7 +1006,8 @@ impl BlePoolBackend {
             401 => {
                 self.tokens
                     .insert(rch.clone(), Failed(MissingTokenReason::Unauthorized));
-                self.notify_device_list().await;
+                self.notify_device_list(Some(NetworkActivity::Success))
+                    .await;
             }
             201 => {
                 let Ok(token_response) = resp.array_buffer() else { return };
@@ -962,7 +1022,8 @@ impl BlePoolBackend {
                     };
 
                 self.tokens.insert(rch.clone(), Obtained(token_response));
-                self.notify_device_list().await;
+                self.notify_device_list(Some(NetworkActivity::Success))
+                    .await;
                 log::info!("Token obtained.");
             }
             _ => {
@@ -1028,7 +1089,7 @@ impl BlePoolBackend {
 
                 log::info!("Derived OSCORE context now to be used with {id:?}");
                 self.security_contexts.insert(id.to_string(), context);
-                self.notify_device_list().await;
+                self.notify_device_list(None).await;
             }
             Err(e) => {
                 log::error!("Error occurred attempting to send a token, removing as unusable and staling RS identity data: {:?}", e);
@@ -1036,7 +1097,7 @@ impl BlePoolBackend {
                     .remove(self.rs_identities.get(id).expect("We just had it"));
                 // and for good measure
                 self.rs_identities.remove(id);
-                self.notify_device_list().await;
+                self.notify_device_list(None).await;
             }
         }
     }

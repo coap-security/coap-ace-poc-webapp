@@ -54,6 +54,11 @@ struct Model {
     // as to how to simplify them.
     manual_device_as_uri: String,
     manual_device_audience: String,
+
+    /// Shall we pretend the browser was offline?
+    force_offline: bool,
+    /// Cached state of window.on_line()
+    browser_is_online: bool,
 }
 
 /// Events that the main [Model] receives
@@ -76,6 +81,7 @@ enum Message {
         ble::BackToFrontMessage,
     ),
 
+    BrowserOnlineChanged(bool),
     NoOp,
 
     /// Remove a URI from the list of currently logged-in-to ASes
@@ -88,6 +94,8 @@ enum Message {
     /// [SetManualDeviceAudience] events. This also removes any tokens or security associations for
     /// that device.
     ManualDeviceRequest,
+
+    ToggleForceOffline,
 }
 use Message::*;
 
@@ -133,10 +141,30 @@ impl Component for Model {
             Self::link_ble_queue(ctx, blepool_notifications);
         }
 
+        let window = web_sys::window().expect("Running in a browser");
+        let callback = ctx.link().callback(|b| BrowserOnlineChanged(b));
+        let callback2 = callback.clone();
+        Box::leak(Box::new(gloo_events::EventListener::new(
+            &window,
+            "online",
+            move |_| {
+                callback.emit(true);
+            },
+        )));
+        Box::leak(Box::new(gloo_events::EventListener::new(
+            &window,
+            "offline",
+            move |_| {
+                callback2.emit(false);
+            },
+        )));
+
         Model {
             blepool,
             manual_device_as_uri: DEMO_AS.to_string(),
             manual_device_audience: "d01".to_string(),
+            force_offline: false,
+            browser_is_online: web_sys::window().unwrap().navigator().on_line(),
         }
     }
 
@@ -218,6 +246,18 @@ impl Component for Model {
                 false
             }
 
+            ToggleForceOffline => {
+                self.force_offline = !self.force_offline;
+                if let Some(pool) = self.blepool.as_mut() {
+                    pool.set_force_offline(self.force_offline);
+                }
+                true
+            }
+            BrowserOnlineChanged(state) => {
+                self.browser_is_online = state;
+                true
+            }
+
             NoOp => false,
         }
     }
@@ -234,6 +274,22 @@ impl Component for Model {
             false => {
                 html! { <button disabled=true title="Bluetooth not available in this browser">{ "Search nearby devices" }</button> }
             }
+        };
+
+        let netclass = if let Some(pool) = self.blepool.as_ref() {
+            match (
+                pool.last_network_was_success,
+                pool.network_successes % 2,
+                pool.network_failures % 2,
+            ) {
+                (Some(true), 0, _) => classes!["network", "allowed"],
+                (Some(true), _, _) => classes!["network", "allowed2"],
+                (Some(false), _, 0) => classes!["network", "blocked"],
+                (Some(false), _, _) => classes!["network", "blocked2"],
+                (None, _, _) => classes!["network"],
+            }
+        } else {
+            classes!["network"]
         };
 
         html! {
@@ -263,14 +319,18 @@ impl Component for Model {
                 <h2>{ "Logins" }</h2>
                 { self.view_login_list(ctx) }
                 <footer>
-                    {"This is "}
-                    <a href={built_info::PKG_REPOSITORY}>{ built_info::PKG_NAME }</a>
-                    { format!(
-                        " version {} (git {}{}).",
-                        built_info::PKG_VERSION,
-                        built_info::GIT_VERSION.unwrap_or("unknown"),
-                        built_info::GIT_DIRTY.and_then(|dirty| dirty.then_some("-dirty")).unwrap_or(""),
-                        ) }</footer>
+                    <p class={ netclass }>{ "Internet connection " }{ if self.browser_is_online { "available, " } else { "unavailable, " }}<label><input type="checkbox" checked={ self.force_offline } onchange={ ctx.link().callback(|_| ToggleForceOffline) } />{ " force offline mode" }</label></p>
+                    <p>
+                        {"This is "}
+                        <a href={built_info::PKG_REPOSITORY}>{ built_info::PKG_NAME }</a>
+                        { format!(
+                            " version {} (git {}{}).",
+                            built_info::PKG_VERSION,
+                            built_info::GIT_VERSION.unwrap_or("unknown"),
+                            built_info::GIT_DIRTY.and_then(|dirty| dirty.then_some("-dirty")).unwrap_or(""),
+                            ) }
+                    </p>
+                </footer>
             </div>
         }
     }
