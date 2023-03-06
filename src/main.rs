@@ -41,6 +41,8 @@ pub mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
 
+const DEMO_AS: &str = "https://as.coap.amsuess.com/token";
+
 /// Main application component
 ///
 /// This renders to the full application view, and hooks up its UI and network elements to receive
@@ -133,7 +135,7 @@ impl Component for Model {
 
         Model {
             blepool,
-            manual_device_as_uri: "https://as.coap.amsuess.com/token".to_string(),
+            manual_device_as_uri: DEMO_AS.to_string(),
             manual_device_audience: "d01".to_string(),
         }
     }

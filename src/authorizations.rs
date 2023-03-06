@@ -63,7 +63,8 @@ pub fn known_as_not_logged_in() -> Vec<String> {
         .hash()
         .unwrap()
         .to_string();
-    hash.split('#')
+    let mut result: Vec<_> = hash
+        .split('#')
         .filter(|part| !part.is_empty())
         // Silently discarding erroneous components
         .filter_map(|part| {
@@ -75,7 +76,13 @@ pub fn known_as_not_logged_in() -> Vec<String> {
                 Some(_) => None,
             }
         })
-        .collect()
+        .collect();
+
+    if hash == "" {
+        result.push(crate::DEMO_AS.to_string());
+    }
+
+    result
 }
 
 /// New fragment part when removing the token URI given as `without`.
