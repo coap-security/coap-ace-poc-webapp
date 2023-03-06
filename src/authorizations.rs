@@ -121,3 +121,23 @@ pub fn link_for_removal(uri: &str) -> String {
     }
     result
 }
+
+#[derive(Debug, Copy, Clone)]
+/// Error type indicating that a login URI is somehow not conforming to the custom login
+/// append_and_redirect mechanism. (Currently, there are no requirements other than that it's a
+/// valid URI).
+pub struct InvalidLoginUri;
+
+pub fn build_login_uri(as_uri: &str, token_uri: &str) -> Result<String, InvalidLoginUri> {
+    if let Ok(mut login_uri) = url::Url::parse(as_uri) {
+        let current_address = web_sys::window().unwrap().location().href().unwrap();
+
+        login_uri.set_query(Some(&format!(
+            "append_and_redirect={}#{};",
+            current_address, token_uri
+        )));
+        Ok(login_uri.to_string())
+    } else {
+        Err(InvalidLoginUri)
+    }
+}

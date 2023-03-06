@@ -294,7 +294,6 @@ impl Model {
 
     fn view_bluetooth_list(&self, ctx: &Context<Self>) -> Html {
         let link = ctx.link();
-        let current_address = web_sys::window().unwrap().location().href().unwrap();
 
         match &self.blepool {
             Some(p) => html! { <ul class="devices">
@@ -339,9 +338,8 @@ impl Model {
                     sec_assoc = html! { <p>{ "Security association: " }{ &rs_identity.audience }{ " at " }{ &rs_identity.as_uri }</p> };
 
                     if let Some(login_uri) = &con.login_uri {
-                        if let Ok(mut login_uri) = url::Url::parse(login_uri) {
-                            login_uri.set_query(Some(&format!("append_and_redirect={}#{};", current_address, rs_identity.as_uri)));
-                            sec_assoc = html! { <> { sec_assoc } <p><b>{ "Login required through " }<a href={ login_uri.to_string() }>{ con.login_uri.as_ref().unwrap() }</a></b></p></> };
+                        if let Ok(href) = authorizations::build_login_uri(login_uri, &rs_identity.as_uri) {
+                            sec_assoc = html! { <> { sec_assoc } <p><b>{ "Login required through " }<a href={ href }>{ login_uri }</a></b></p></> };
                         }
                     }
                     // else, we'd need to take the as_uri and strip it out from our fragment to log
