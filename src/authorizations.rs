@@ -21,6 +21,8 @@
 //! * For each AS, its token endpoint URI, the authentication string, and optionally a description
 //!   of the logged-in user or role are stored. These componentes are separated by the ';'
 //!   character.
+//! * If no authentication string is given, the AS is treated as "logged out" but still available
+//!   for later log-in.
 
 /// Produce a list of currently available URIs and the Authentication values used with it
 pub fn current_authorizations() -> Vec<(String, String, Option<String>)> {
@@ -50,10 +52,35 @@ pub fn current_authorizations() -> Vec<(String, String, Option<String>)> {
         .collect()
 }
 
-pub fn link_for_removal(uri: &str) -> String {
+/// Produce a list of URIs that are known to be useful token endpoints but there is no current
+/// login
+pub fn known_as_not_logged_in() -> Vec<String> {
+    let hash = web_sys::window()
+        .expect("This is running inside a web browser")
+        .location()
+        .hash()
+        .unwrap()
+        .to_string();
+    hash.split('#')
+        .filter(|part| !part.is_empty())
+        // Silently discarding erroneous components
+        .filter_map(|part| {
+            let mut components = part.split(';');
+            let part_token_uri = components.next()?;
+            match components.next() {
+                None => Some(part_token_uri.to_string()),
+                // It's really a current authorization and not a non-logged-in AS
+                Some(_) => None,
+            }
+        })
+        .collect()
+}
+
+/// New fragment part when removing the token URI given as `without`.
+fn fragment_for_state(without: &str) -> String {
     let mut result = String::new();
     for (u, a, d) in current_authorizations().iter() {
-        if u == uri {
+        if u == without {
             continue;
         }
         result.push_str("#");
@@ -65,6 +92,29 @@ pub fn link_for_removal(uri: &str) -> String {
             result.push_str(d);
         }
     }
+    for u in known_as_not_logged_in().iter() {
+        if u == without {
+            continue;
+        }
+        result.push_str("#");
+        result.push_str(u);
+    }
+
+    result
+}
+
+/// Local link that can be followed to log out of uri.
+///
+/// Incidentally, if uri is not in the list, it adds it to the list of not-logged-in ASes.
+pub fn link_for_logout(uri: &str) -> String {
+    let mut result = fragment_for_state(uri);
+    result.push_str("#");
+    result.push_str(uri);
+    result
+}
+
+pub fn link_for_removal(uri: &str) -> String {
+    let mut result = fragment_for_state(uri);
     if result.is_empty() {
         // So it doesn't result in a refresh
         result.push_str("#");

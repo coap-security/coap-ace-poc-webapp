@@ -190,7 +190,7 @@ impl Component for Model {
                 web_sys::window()
                     .unwrap()
                     .location()
-                    .set_href(&authorizations::link_for_removal(&uri))
+                    .set_href(&authorizations::link_for_logout(&uri))
                     .unwrap();
                 true
             }
