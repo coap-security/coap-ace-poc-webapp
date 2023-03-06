@@ -33,11 +33,18 @@ pub struct DeviceDetails {
     pub name: Option<String>,
     /// Claimed cryptographic identity
     pub rs_identity: Option<RequestCreationHints>,
-    /// There was a 401 last time a token retrieval was attempted
-    pub authorization_missing: bool,
+    /// Description of the error that led to the absence of a token.
+    pub why_no_token: Option<MissingTokenReason>,
     /// Short form of the access token obtained for that connection, if any
     pub access_token: Option<String>,
     pub oscore_established: bool,
+}
+
+#[derive(Debug, Copy, Clone)]
+#[non_exhaustive]
+pub enum MissingTokenReason {
+    Unauthorized,
+    ServerUnavailable,
 }
 
 /// Messages emitted by yew through the [BlePool], directing the BLE main loop in the
@@ -95,7 +102,7 @@ pub struct NoWebBluetoothSupport;
 #[derive(Debug)]
 enum TokenStatus {
     Obtained(dcaf::AccessTokenResponse),
-    Failed,
+    Failed(MissingTokenReason),
     // Not using a Result because we could have a Pending inbetween as well
 }
 use TokenStatus::*;
@@ -104,6 +111,13 @@ impl TokenStatus {
     fn get_obtained(&self) -> Option<&dcaf::AccessTokenResponse> {
         match self {
             Obtained(atr) => Some(atr),
+            _ => None,
+        }
+    }
+
+    fn get_failed(&self) -> Option<MissingTokenReason> {
+        match self {
+            Failed(reason) => Some(*reason),
             _ => None,
         }
     }
@@ -365,7 +379,7 @@ impl BlePoolBackend {
                     is_connected: con.is_some(),
                     name: con.and_then(|c| Some(c.name.as_ref()?.clone())),
                     rs_identity: rs_identity.cloned(),
-                    authorization_missing: matches!(&token, Some(Failed)),
+                    why_no_token: token.and_then(|ts| ts.get_failed()),
                     access_token: token.and_then(|ts| ts.get_obtained()).map(present_token),
                     oscore_established: self.security_contexts.contains_key(id),
                 }
@@ -379,7 +393,7 @@ impl BlePoolBackend {
                 is_connected: false,
                 name: None,
                 rs_identity: Some(rch.clone()),
-                authorization_missing: matches!(&token, Some(Failed)),
+                why_no_token: token.and_then(|ts| ts.get_failed()),
                 access_token: token.and_then(|ts| ts.get_obtained()).map(present_token),
                 oscore_established: false,
             }
@@ -910,19 +924,29 @@ impl BlePoolBackend {
             // anyway
             .body(Some(&body));
 
-        let Ok(request) = Request::new_with_str_and_init(&rch.as_uri, &opts) else { return };
+        let Ok(request) = Request::new_with_str_and_init(&rch.as_uri, &opts) else {
+            // More like "Browser can't even figure out how server would be reached"
+            self.tokens.insert(rch.clone(), Failed(MissingTokenReason::ServerUnavailable));
+            self.notify_device_list().await;
+            return
+        };
 
         if let Some(authvalue) = self.http_authorization_for(&rch.as_uri) {
             request.headers().set("Authorization", &authvalue).unwrap();
         }
 
         let window = web_sys::window().expect("Running in a browser");
-        let Ok(resp_value) = window.fetch_with_request(&request).js2rs().await else { return };
+        let Ok(resp_value) = window.fetch_with_request(&request).js2rs().await else {
+            self.tokens.insert(rch.clone(), Failed(MissingTokenReason::ServerUnavailable));
+            self.notify_device_list().await;
+            return
+        };
 
         let resp: Response = resp_value.try_into().unwrap();
         match resp.status() {
             401 => {
-                self.tokens.insert(rch.clone(), Failed);
+                self.tokens
+                    .insert(rch.clone(), Failed(MissingTokenReason::Unauthorized));
                 self.notify_device_list().await;
             }
             201 => {

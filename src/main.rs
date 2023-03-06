@@ -346,21 +346,32 @@ impl Model {
 
                 if let Some(rs_identity) = &con.rs_identity {
                     sec_assoc = html! { <p>{ "Security association: " }{ &rs_identity.audience }{ " at " }{ &rs_identity.as_uri }</p> };
-
-                    if con.authorization_missing {
-                        if let Ok((href, without_query)) = authorizations::build_login_uri(&rs_identity.as_uri) {
-                            sec_assoc = html! { <> { sec_assoc } <p><b>{ "Login required through " }<a href={ href }>{ without_query }</a></b></p></> };
-                        }
-                    }
-                    // else, we'd need to take the as_uri and strip it out from our fragment to log
-                    // out
                 }
 
                 html! {
                     <li>
                         { operative }
                         { sec_assoc }
-                        <p>{ "Token: " }{ if let Some(token) = &con.access_token { html! { <tt>{ token }</tt> } } else { "none available".into() } }</p>
+                        <p>{ "Token: " }{ if let Some(token) = &con.access_token {
+                            html! { <tt>{ token }</tt> }
+                        } else {
+                            match con.why_no_token {
+                                // We've already had the special treatment for Unauthorized above
+                                Some(ble::MissingTokenReason::Unauthorized) => {
+                                    if let Some(rs_identity) = &con.rs_identity {
+                                        if let Ok((href, without_query)) = authorizations::build_login_uri(&rs_identity.as_uri) {
+                                            html! { <b>{ "Login required through " }<a href={ href }>{ without_query }</a></b> }
+                                        } else {
+                                            "none available (invalid AS)".into()
+                                        }
+                                    } else {
+                                        "none available (AS not yet known)".into()
+                                    }
+                                },
+                                None => "none available".into(),
+                                Some(reason) => format!("none available ({:?})", reason).into(),
+                            }
+                        } }</p>
                         <p>{ "OSCORE: " }{ if con.oscore_established { "established" } else { "not established" } }</p>
                     </li>
                 }
