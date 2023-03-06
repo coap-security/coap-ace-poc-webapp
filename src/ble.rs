@@ -11,20 +11,11 @@
 // FIXME: Split the pure CoAP-over-GATT from application specifics, and possibly even the
 // application specifics from the yew-specific async adapter
 
+use crate::helpers::PromiseExt;
+
 // From CoAP-over-GATT draft
 const UUID_US: &'static str = "8df804b7-3300-496d-9dfa-f8fb40a236bc";
 const UUID_UC: &'static str = "2a58fc3f-3c62-4ecc-8167-d66d4d9410c2";
-
-/// Helper trait to run `Into<JsFuture>` in a chained style
-trait PromiseExt {
-    fn js2rs(self) -> wasm_bindgen_futures::JsFuture;
-}
-
-impl PromiseExt for js_sys::Promise {
-    fn js2rs(self) -> wasm_bindgen_futures::JsFuture {
-        self.into()
-    }
-}
 
 pub type DeviceId = String;
 type RequestCreationHints =

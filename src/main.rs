@@ -32,6 +32,8 @@ use yew::prelude::*;
 
 mod authorizations;
 mod ble;
+mod helpers;
+use helpers::PromiseExt;
 
 use ble::DeviceId;
 
