@@ -36,7 +36,9 @@ pub struct DeviceDetails {
     /// Description of the error that led to the absence of a token.
     pub why_no_token: Option<MissingTokenReason>,
     /// Short form of the access token obtained for that connection, if any
-    pub access_token: Option<String>,
+    ///
+    /// Accompanied by the time that token was obtained (on the system's time scale)
+    pub access_token: Option<(String, Timestamp)>,
     pub oscore_established: bool,
 }
 
@@ -143,6 +145,8 @@ impl TokenStatus {
     }
 }
 
+pub type Timestamp = instant::SystemTime;
+
 /// The parts of the BlePool that are runin their own task
 struct BlePoolBackend {
     front2back: futures::channel::mpsc::Receiver<FrontToBackMessage>,
@@ -159,7 +163,12 @@ struct BlePoolBackend {
     /// even when the connections are gone.
     preseeded_rch: std::collections::HashSet<RequestCreationHints>,
     /// Tokens requested from the AS
-    tokens: std::collections::HashMap<RequestCreationHints, TokenStatus>,
+    ///
+    /// The timestamp associated with them is primarily intended for visualization, and represents
+    /// when the token was added to the list. It is not exactly the issuing timestamp (if it's sent
+    /// with the token at all), but obtained from the local clock to ensure it can be used in
+    /// visualization.
+    tokens: std::collections::HashMap<RequestCreationHints, (TokenStatus, Timestamp)>,
     /// Established security contexts
     security_contexts: std::collections::HashMap<DeviceId, liboscore::PrimitiveContext>,
 
@@ -425,8 +434,10 @@ impl BlePoolBackend {
                     is_connected: con.is_some(),
                     name: con.and_then(|c| Some(c.name.as_ref()?.clone())),
                     rs_identity: rs_identity.cloned(),
-                    why_no_token: token.and_then(|ts| ts.get_failed()),
-                    access_token: token.and_then(|ts| ts.get_obtained()).map(present_token),
+                    why_no_token: token.and_then(|(ts, _)| ts.get_failed()),
+                    access_token: token.and_then(|(ts, when)| {
+                        ts.get_obtained().map(|o| (present_token(o), when.clone()))
+                    }),
                     oscore_established: self.security_contexts.contains_key(id),
                 }
             })
@@ -439,8 +450,10 @@ impl BlePoolBackend {
                 is_connected: false,
                 name: None,
                 rs_identity: Some(rch.clone()),
-                why_no_token: token.and_then(|ts| ts.get_failed()),
-                access_token: token.and_then(|ts| ts.get_obtained()).map(present_token),
+                why_no_token: token.and_then(|(ts, _)| ts.get_failed()),
+                access_token: token.and_then(|(ts, when)| {
+                    ts.get_obtained().map(|o| (present_token(o), when.clone()))
+                }),
                 oscore_established: false,
             }
         }));
@@ -952,7 +965,7 @@ impl BlePoolBackend {
         if self
             .tokens
             .get(rch)
-            .and_then(|ts| ts.get_obtained())
+            .and_then(|(ts, _)| ts.get_obtained())
             .is_some()
         {
             // All is fine already
@@ -960,8 +973,7 @@ impl BlePoolBackend {
         };
 
         if self.force_offline {
-            self.tokens
-                .insert(rch.clone(), Failed(MissingTokenReason::ForcedOffline));
+            self.set_token(rch.clone(), Failed(MissingTokenReason::ForcedOffline));
             self.notify_device_list(Some(NetworkActivity::Failure))
                 .await;
             return;
@@ -985,7 +997,7 @@ impl BlePoolBackend {
 
         let Ok(request) = Request::new_with_str_and_init(&rch.as_uri, &opts) else {
             // More like "Browser can't even figure out how server would be reached"
-            self.tokens.insert(rch.clone(), Failed(MissingTokenReason::ServerUnavailable));
+            self.set_token(rch.clone(), Failed(MissingTokenReason::ServerUnavailable));
             self.notify_device_list(Some(NetworkActivity::Failure)).await;
             return
         };
@@ -996,7 +1008,7 @@ impl BlePoolBackend {
 
         let window = web_sys::window().expect("Running in a browser");
         let Ok(resp_value) = window.fetch_with_request(&request).js2rs().await else {
-            self.tokens.insert(rch.clone(), Failed(MissingTokenReason::ServerUnavailable));
+            self.set_token(rch.clone(), Failed(MissingTokenReason::ServerUnavailable));
             self.notify_device_list(Some(NetworkActivity::Failure)).await;
             return
         };
@@ -1004,8 +1016,7 @@ impl BlePoolBackend {
         let resp: Response = resp_value.try_into().unwrap();
         match resp.status() {
             401 => {
-                self.tokens
-                    .insert(rch.clone(), Failed(MissingTokenReason::Unauthorized));
+                self.set_token(rch.clone(), Failed(MissingTokenReason::Unauthorized));
                 self.notify_device_list(Some(NetworkActivity::Success))
                     .await;
             }
@@ -1021,7 +1032,7 @@ impl BlePoolBackend {
                         return
                     };
 
-                self.tokens.insert(rch.clone(), Obtained(token_response));
+                self.set_token(rch.clone(), Obtained(token_response));
                 self.notify_device_list(Some(NetworkActivity::Success))
                     .await;
                 log::info!("Token obtained.");
@@ -1046,7 +1057,7 @@ impl BlePoolBackend {
             // Prerequisite missing, can't help it
             return;
         };
-        let Some(Obtained(token_response)) = self.tokens.get(rs_identity) else {
+        let Some((Obtained(token_response), _)) = self.tokens.get(rs_identity) else {
             // Prerequisite missing, can't help it
             return;
         };
@@ -1100,5 +1111,9 @@ impl BlePoolBackend {
                 self.notify_device_list(None).await;
             }
         }
+    }
+
+    fn set_token(&mut self, rch: RequestCreationHints, token: TokenStatus) {
+        self.tokens.insert(rch, (token, instant::SystemTime::now()));
     }
 }

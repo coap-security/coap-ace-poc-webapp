@@ -412,8 +412,13 @@ impl Model {
                     <li>
                         { operative }
                         { sec_assoc }
-                        <p>{ "Token: " }{ if let Some(token) = &con.access_token {
-                            html! { <tt>{ token }</tt> }
+                        <p>{ "Token: " }{ if let Some((token, when)) = &con.access_token {
+                            let class = if instant::SystemTime::now().duration_since(*when).unwrap().as_secs() < 10 {
+                                classes!["new"]
+                            } else {
+                                classes![]
+                            };
+                            html! { <span class={ class }><tt>{ token }</tt></span> }
                         } else {
                             match con.why_no_token {
                                 // We've already had the special treatment for Unauthorized above
