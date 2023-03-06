@@ -138,7 +138,10 @@ pub struct InvalidLoginUri;
 /// string (which is not expected to be useful on its own, but quite practical for display purposes)
 pub fn build_login_uri(token_uri: &str) -> Result<(String, String), InvalidLoginUri> {
     if let Ok(login_uri) = url::Url::parse(token_uri) {
-        let mut login_uri = login_uri.join("./").unwrap();
+        let mut login_uri = login_uri
+            .join("./")
+            // url can't do relative resolution on URN-style URIs
+            .map_err(|_| InvalidLoginUri)?;
         let without_query = login_uri.to_string();
 
         // current URI, but make sure that if we get into a double-login situation, the current one
