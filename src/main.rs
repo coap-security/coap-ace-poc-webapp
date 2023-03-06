@@ -337,9 +337,9 @@ impl Model {
                 if let Some(rs_identity) = &con.rs_identity {
                     sec_assoc = html! { <p>{ "Security association: " }{ &rs_identity.audience }{ " at " }{ &rs_identity.as_uri }</p> };
 
-                    if let Some(login_uri) = &con.login_uri {
-                        if let Ok(href) = authorizations::build_login_uri(login_uri, &rs_identity.as_uri) {
-                            sec_assoc = html! { <> { sec_assoc } <p><b>{ "Login required through " }<a href={ href }>{ login_uri }</a></b></p></> };
+                    if con.authorization_missing {
+                        if let Ok((href, without_query)) = authorizations::build_login_uri(&rs_identity.as_uri) {
+                            sec_assoc = html! { <> { sec_assoc } <p><b>{ "Login required through " }<a href={ href }>{ without_query }</a></b></p></> };
                         }
                     }
                     // else, we'd need to take the as_uri and strip it out from our fragment to log

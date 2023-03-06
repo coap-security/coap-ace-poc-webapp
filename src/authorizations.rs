@@ -7,13 +7,15 @@
 //! The protocol is a vast simplification of the OAuth protocol (with no actual security
 //! properties) custom to the demo. It works as follows:
 //!
-//! The login process is started by the app discovering the login page through the Location header
-//! of a failed attempt to obtain a token from the AS token endpoint. It then assumes that that
-//! location supports this protocol, and sends the user there, with an added query parameter of
-//! `append_and_redirect=` the current URI, already pre-populated with the token endpoint URI and a
-//! semicolon. The login site, on successful "login", will then append some bearer token (usable in
-//! the Authentication header), and optionally a semicolon and the name of the role (or user)
-//! chosen.
+//! The login process is started by the app calculating the login page as "./" of the token URI of
+//! a failed attempt to obtain a token from the AS token endpoint. (This used to utilize the
+//! Location header of the failed request, but that was a remnant of when logins were envisioned to
+//! be based on cookies -- as the login protocol is bespoke to the demo anyway, going the simple
+//! path is acceptable). It then assumes that that location supports this protocol, and sends the
+//! user there, with an added query parameter of `append_and_redirect=` the current URI, already
+//! pre-populated with the token endpoint URI and a semicolon. The login site, on successful
+//! "login", will then append some bearer token (usable in the Authentication header), and
+//! optionally a semicolon and the name of the role (or user) chosen.
 //!
 //! Authorizations are stored in the fragment identifier as follows:
 //!
@@ -128,15 +130,26 @@ pub fn link_for_removal(uri: &str) -> String {
 /// valid URI).
 pub struct InvalidLoginUri;
 
-pub fn build_login_uri(as_uri: &str, token_uri: &str) -> Result<String, InvalidLoginUri> {
-    if let Ok(mut login_uri) = url::Url::parse(as_uri) {
-        let current_address = web_sys::window().unwrap().location().href().unwrap();
+/// Turn a token URI into a login URI usable to follow to log in using this module's protocol.
+/// (That is, strip off the typical `/token` part by resolving `./`, and then set the query
+/// append_and_redirect parameter so that the login form returns to this page).
+///
+/// Returns two forms of the login URI: The regularly usable one, and a variety without the query
+/// string (which is not expected to be useful on its own, but quite practical for display purposes)
+pub fn build_login_uri(token_uri: &str) -> Result<(String, String), InvalidLoginUri> {
+    if let Ok(login_uri) = url::Url::parse(token_uri) {
+        let mut login_uri = login_uri.join("./").unwrap();
+        let without_query = login_uri.to_string();
+
+        // current URI, but make sure that if we get into a double-login situation, the current one
+        // is discarded
+        let current_address = link_for_removal(token_uri);
 
         login_uri.set_query(Some(&format!(
             "append_and_redirect={}#{};",
             current_address, token_uri
         )));
-        Ok(login_uri.to_string())
+        Ok((login_uri.to_string(), without_query))
     } else {
         Err(InvalidLoginUri)
     }

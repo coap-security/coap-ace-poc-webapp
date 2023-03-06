@@ -33,8 +33,8 @@ pub struct DeviceDetails {
     pub name: Option<String>,
     /// Claimed cryptographic identity
     pub rs_identity: Option<RequestCreationHints>,
-    /// URI a failed attempt to abtain an OSCORE token from this RCH redirected to
-    pub login_uri: Option<String>,
+    /// There was a 401 last time a token retrieval was attempted
+    pub authorization_missing: bool,
     /// Short form of the access token obtained for that connection, if any
     pub access_token: Option<String>,
     pub oscore_established: bool,
@@ -92,6 +92,23 @@ pub struct BlePool {
 #[derive(Debug)]
 pub struct NoWebBluetoothSupport;
 
+#[derive(Debug)]
+enum TokenStatus {
+    Obtained(dcaf::AccessTokenResponse),
+    Failed,
+    // Not using a Result because we could have a Pending inbetween as well
+}
+use TokenStatus::*;
+
+impl TokenStatus {
+    fn get_obtained(&self) -> Option<&dcaf::AccessTokenResponse> {
+        match self {
+            Obtained(atr) => Some(atr),
+            _ => None,
+        }
+    }
+}
+
 /// The parts of the BlePool that are runin their own task
 struct BlePoolBackend {
     front2back: futures::channel::mpsc::Receiver<FrontToBackMessage>,
@@ -107,10 +124,8 @@ struct BlePoolBackend {
     /// BLE device. Devices that vanish still have their DeviceId an can be kept in rs_identities
     /// even when the connections are gone.
     preseeded_rch: std::collections::HashSet<RequestCreationHints>,
-    /// Login URIs that we were redirected to
-    login_uris: std::collections::HashMap<String, String>,
     /// Tokens requested from the AS
-    tokens: std::collections::HashMap<RequestCreationHints, dcaf::AccessTokenResponse>,
+    tokens: std::collections::HashMap<RequestCreationHints, TokenStatus>,
     /// Established security contexts
     security_contexts: std::collections::HashMap<DeviceId, liboscore::PrimitiveContext>,
 }
@@ -344,33 +359,28 @@ impl BlePoolBackend {
                 let id: &str = id.as_ref();
                 let rs_identity = self.rs_identities.get(id);
                 let con = self.connections.get(id);
+                let token = rs_identity.and_then(|rch| self.tokens.get(rch));
                 DeviceDetails {
                     id: Some(id.to_string()),
                     is_connected: con.is_some(),
                     name: con.and_then(|c| Some(c.name.as_ref()?.clone())),
                     rs_identity: rs_identity.cloned(),
-                    login_uri: rs_identity
-                        .map(|i| &i.as_uri)
-                        .and_then(|u| self.login_uris.get(u).map(|login| login.to_owned())),
-                    access_token: rs_identity
-                        .and_then(|rch| self.tokens.get(rch))
-                        .map(present_token),
+                    authorization_missing: matches!(&token, Some(Failed)),
+                    access_token: token.and_then(|ts| ts.get_obtained()).map(present_token),
                     oscore_established: self.security_contexts.contains_key(id),
                 }
             })
             .collect();
 
         new_list.extend(self.preseeded_rch.iter().map(|rch| {
+            let token = self.tokens.get(rch);
             DeviceDetails {
                 id: None,
                 is_connected: false,
                 name: None,
                 rs_identity: Some(rch.clone()),
-                login_uri: self
-                    .login_uris
-                    .get(rch.as_uri.as_str())
-                    .map(|login| login.to_owned()),
-                access_token: self.tokens.get(rch).map(present_token),
+                authorization_missing: matches!(&token, Some(Failed)),
+                access_token: token.and_then(|ts| ts.get_obtained()).map(present_token),
                 oscore_established: false,
             }
         }));
@@ -389,7 +399,6 @@ impl BlePoolBackend {
             connections: Default::default(),
             rs_identities: Default::default(),
             preseeded_rch: Default::default(),
-            login_uris: Default::default(),
             tokens: Default::default(),
             security_contexts: Default::default(),
         };
@@ -875,7 +884,12 @@ impl BlePoolBackend {
     ///
     /// Currently fails silently if there is no rs_identities entry.
     async fn try_get_token(&mut self, rch: &RequestCreationHints) {
-        if self.tokens.contains_key(rch) {
+        if self
+            .tokens
+            .get(rch)
+            .and_then(|ts| ts.get_obtained())
+            .is_some()
+        {
             // All is fine already
             return;
         };
@@ -908,19 +922,8 @@ impl BlePoolBackend {
         let resp: Response = resp_value.try_into().unwrap();
         match resp.status() {
             401 => {
-                if let Ok(Some(login_uri)) = resp.headers().get("Location") {
-                    let Ok(login_uri) = url::Url::parse(&resp.url()).expect("We just requested from there")
-                        .join(&login_uri)
-                        else { log::error!("Provided URI reference is invalid"); return };
-                    self.login_uris
-                        .insert(rch.as_uri.to_owned(), login_uri.to_string());
-                    self.notify_device_list().await;
-                } else {
-                    log::error!(
-                        "Token endpoint reported Unauthorized but did not offer a better location"
-                    );
-                    return;
-                }
+                self.tokens.insert(rch.clone(), Failed);
+                self.notify_device_list().await;
             }
             201 => {
                 let Ok(token_response) = resp.array_buffer() else { return };
@@ -934,7 +937,7 @@ impl BlePoolBackend {
                         return
                     };
 
-                self.tokens.insert(rch.clone(), token_response);
+                self.tokens.insert(rch.clone(), Obtained(token_response));
                 self.notify_device_list().await;
                 log::info!("Token obtained.");
             }
@@ -958,7 +961,7 @@ impl BlePoolBackend {
             // Prerequisite missing, can't help it
             return;
         };
-        let Some(token_response) = self.tokens.get(rs_identity) else {
+        let Some(Obtained(token_response)) = self.tokens.get(rs_identity) else {
             // Prerequisite missing, can't help it
             return;
         };
