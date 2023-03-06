@@ -143,7 +143,9 @@ pub fn build_login_uri(token_uri: &str) -> Result<(String, String), InvalidLogin
 
         // current URI, but make sure that if we get into a double-login situation, the current one
         // is discarded
-        let current_address = link_for_removal(token_uri);
+        let current_address = web_sys::window().unwrap().location().href().unwrap();
+        let current_address = url::Url::parse(&current_address).unwrap();
+        let current_address = current_address.join(&link_for_removal(token_uri)).unwrap();
 
         login_uri.set_query(Some(&format!(
             "append_and_redirect={}#{};",
