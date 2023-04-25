@@ -19,3 +19,9 @@ pages:
   artifacts:
     paths:
       - public
+
+reuse:
+  image: python:3
+  script:
+    - pip install reuse
+    - reuse lint
