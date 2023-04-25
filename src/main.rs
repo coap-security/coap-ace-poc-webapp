@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2022 EDF (Électricité de France S.A.)
+// SPDX-License-Identifier: BSD-3-Clause
+// See README for all details on copyright, authorship and license.
 //! CoAP/ACE PoC: Web application
 //!
 //! This application is a user interface for embedded devices offering CoAP services over

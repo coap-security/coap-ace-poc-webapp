@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!--
+SPDX-FileCopyrightText: Copyright 2022 EDF (Électricité de France S.A.)
+SPDX-License-Identifier: BSD-3-Clause
+See README for all details on copyright, authorship and license.
+-->
 <svg version="1.1" width="512" height="512" xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg">
   <path style="fill:#4574a6;stroke:#000000;stroke-width:2px;" d="m -246,83 h 720 v 98 l 20,13 v 185 l -20,11 v 36 h -720 z" />
   <rect style="fill:#90ff6c" width="112" height="63" x="85" y="151" />

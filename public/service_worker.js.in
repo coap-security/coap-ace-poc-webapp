@@ -1,5 +1,9 @@
-// Based on Mozilla's PWA examples from https://github.com/mdn/pwa-examples/,
-// published under CC0
+// SPDX-FileCopyrightText: Copyright 2022 EDF (Électricité de France S.A.)
+// SPDX-License-Identifier: BSD-3-Clause
+// See README for all details on copyright, authorship and license.
+//
+// Originally based on Mozilla's PWA examples from
+// https://github.com/mdn/pwa-examples/, published under CC0
 
 // Populated by the build process, this ensures there is variation on the
 // service worker file, so updates get eventually detected (although they might

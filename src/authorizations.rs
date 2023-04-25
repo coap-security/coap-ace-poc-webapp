@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2022 EDF (Électricité de France S.A.)
+// SPDX-License-Identifier: BSD-3-Clause
+// See README for all details on copyright, authorship and license.
 //! This module manages a list of HTTP Authorization tokens placed plainly in the fragment part of
 //! the URI.
 //!

@@ -1,3 +1,7 @@
+<!--
+SPDX-FileCopyrightText: Copyright 2022 EDF (Électricité de France S.A.)
+SPDX-License-Identifier: BSD-3-Clause
+-->
 CoAP/ACE PoC: Web application
 =============================
 
@@ -30,9 +34,11 @@ Typical issues
 License
 -------
 
-Copyright 2022 EDF. This software was developed in collaboration with Christian Amsüss.
+This project and all files contained in it is published under the
+BSD-3-Clause license as defined in [`LICENSES/BSD-3-Clause.txt`](LICENSES/BSD-3-Clause.txt).
 
-This software is published under the terms of the BSD-3-Clause license
-as detailed in [LICENSE file](LICENSE.md).
+Copyright: 2022 EDF (Électricité de France S.A.)
+
+Author: Christian Amsüss
 
 Note that additional terms may apply to the built output.
