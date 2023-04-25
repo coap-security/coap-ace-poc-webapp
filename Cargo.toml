@@ -6,7 +6,7 @@
 name = "coap-ace-poc-webapp"
 version = "0.1.0"
 edition = "2021"
-authors = [ "EDF, developed in collaboration with Christian Amsüss" ]
+authors = [ "Christian Amsüss" ]
 license = "BSD-3-Clause"
 repository = "https://gitlab.com/oscore/coap-ace-poc-webapp/"
 
