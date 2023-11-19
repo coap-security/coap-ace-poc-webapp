@@ -9,7 +9,7 @@ pages:
     - "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable"
     - source "$HOME/.cargo/env"
     - rustup target add wasm32-unknown-unknown
-    - cargo install wasm-bindgen-cli
+    - cargo install wasm-bindgen-cli --version '0.2.84'
     - RUSTFLAGS=--cfg=web_sys_unstable_apis cargo build --target wasm32-unknown-unknown --release
     - wasm-bindgen target/wasm32-unknown-unknown/release/coap-ace-poc-webapp.wasm --out-dir public/ --web
     - 'sed "s/BUILDID/$(cat public/{index.html,*.css,coap-ace-poc*} | sha256sum | cut -f1 -d" ")/" < public/service_worker.js.in > public/service_worker.js'
