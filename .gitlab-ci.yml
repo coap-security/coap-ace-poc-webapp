@@ -6,7 +6,7 @@ pages:
   image: docker.io/debian:bookworm
   script:
     - apt-get update && apt-get install -y curl git libclang-dev clang pkg-config libssl-dev
-    - "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain nightly"
+    - "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable"
     - source "$HOME/.cargo/env"
     - rustup target add wasm32-unknown-unknown
     - cargo install wasm-bindgen-cli
