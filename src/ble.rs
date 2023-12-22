@@ -492,12 +492,19 @@ impl BlePoolBackend {
                             self_.notify_device_list(None).await;
                             match self_.write_time(&id).await {
                                 Ok(()) => (),
-                                Err(e) => log::error!("Failed to write time: {}", e),
+                                Err(e) => {
+                                    log::error!("Failed to write time: {}", e);
+                                    continue;
+                                }
                             }
 
                             let rch = self_.try_get_rch(&id).await;
-                            if let Some(rch) = rch {
-                                self_.try_get_token(&rch).await;
+                            match rch {
+                                Ok(rch) => self_.try_get_token(&rch).await,
+                                Err(e) => {
+                                    log::error!("Failed to obtain request creation hints: {e}");
+                                    continue;
+                                }
                             }
                             self_.try_establish_security_context(&id).await;
                         }
@@ -629,7 +636,7 @@ impl BlePoolBackend {
         read_response: impl FnOnce(&liboscore::ProtectedMessage, CARRY) -> R,
     ) -> Result<R, &'static str> {
         let rch = self.try_get_rch(id).await;
-        if let Some(rch) = rch {
+        if let Ok(rch) = rch {
             self.try_get_token(&rch).await;
         };
         self.try_establish_security_context(id).await;
@@ -929,25 +936,23 @@ impl BlePoolBackend {
     /// Try to determine the audience value of a given peer.
     ///
     /// FIXME: This should be less clone-y.
-    async fn try_get_rch<'a>(&'a mut self, id: &'a str) -> Option<RequestCreationHints> {
+    async fn try_get_rch<'a>(&'a mut self, id: &'a str) -> Result<RequestCreationHints, &'static str> {
         if let Some(rch) = self.rs_identities.get(id) {
             // All is fine already
-            return Some(rch.clone());
+            return Ok(rch.clone());
         }
 
-        let response = self.prod_temperature(&id).await;
-        if let Ok(rs_identity) = response {
-            // Remove them if they happened to be present without a BLE ID, even though that's
-            // typically not the case
-            let _ = self.preseeded_rch.remove(&rs_identity);
+        let rs_identity = self.prod_temperature(&id).await?;
+        // Remove them if they happened to be present without a BLE ID, even though that's
+        // typically not the case
+        let _ = self.preseeded_rch.remove(&rs_identity);
 
-            // If we don't get any, it's probably game over here, but no
-            // reason to crash
-            self.rs_identities.insert(id.to_string(), rs_identity);
-            self.notify_device_list(None).await;
-        }
+        // If we don't get any, it's probably game over here, but no
+        // reason to crash
+        self.rs_identities.insert(id.to_string(), rs_identity.clone());
+        self.notify_device_list(None).await;
 
-        self.rs_identities.get(id).cloned()
+        Ok(rs_identity)
     }
 
     /// For a given token path, find any Authorization value we have available
