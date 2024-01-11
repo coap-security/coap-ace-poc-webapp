@@ -2,10 +2,10 @@
 SPDX-FileCopyrightText: Copyright 2022 EDF (Électricité de France S.A.)
 SPDX-License-Identifier: BSD-3-Clause
 -->
-CoAP/ACE PoC: Web application
-=============================
+CoAP/ACE-OAuth PoC: Web application
+===================================
 
-This repository contains the web app part of the CoAP/ACE proof-of-concept implementation.
+This repository contains the web app part of the CoAP/ACE-OAuth proof-of-concept implementation.
 The firmware is written in Rust,
 and designed to run on browsers that implement the [Web Bluetooth API].
 
