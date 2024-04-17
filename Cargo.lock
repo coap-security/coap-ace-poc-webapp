@@ -9,7 +9,7 @@ version = 3
 [[package]]
 name = "ace-oscore-helpers"
 version = "0.1.0"
-source = "git+https://gitlab.com/oscore/ace-oscore-helpers/#220bc4b6810b2e149ba415109ab32fe47447054c"
+source = "git+https://gitlab.com/oscore/ace-oscore-helpers/#fbd496add8306bb599191f5732a4d455f726113a"
 dependencies = [
  "aead",
  "aes",
@@ -27,6 +27,7 @@ dependencies = [
  "heapless 0.7.16",
  "hex-literal",
  "liboscore",
+ "rand_core",
  "uluru",
 ]
 
@@ -1397,7 +1398,8 @@ dependencies = [
 [[package]]
 name = "liboscore"
 version = "0.1.0"
-source = "git+https://gitlab.com/oscore/liboscore/?branch=rust-backends#2f9a1793f8ffcaaf23b529e3dc68e12d65ed3286"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "714783a611a616f298b1dba85e93a51500eda855ee3c07cbc08be13fe604de3e"
 dependencies = [
  "bindgen",
  "cbindgen",
@@ -1412,7 +1414,8 @@ dependencies = [
 [[package]]
 name = "liboscore-cryptobackend"
 version = "0.1.0"
-source = "git+https://gitlab.com/oscore/liboscore/?branch=rust-backends#2f9a1793f8ffcaaf23b529e3dc68e12d65ed3286"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7b06dd277dcf5ed4afae72c3caceb49de382a4e6c110065c4b44c5d67e6375a"
 dependencies = [
  "aead",
  "aes",
@@ -1430,7 +1433,8 @@ dependencies = [
 [[package]]
 name = "liboscore-msgbackend"
 version = "0.1.0"
-source = "git+https://gitlab.com/oscore/liboscore/?branch=rust-backends#2f9a1793f8ffcaaf23b529e3dc68e12d65ed3286"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7918511aea2c1f4b6fd463c5dbc9a20f905417bda74c435ca9b3448c4cd309d"
 dependencies = [
  "coap-message",
  "coap-message-utils",
