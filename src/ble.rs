@@ -676,10 +676,14 @@ impl BlePoolBackend {
                             }
                         }
                         let Some(oscore_option) = oscore_option.as_ref() else {
-                            return (ctx, Err("No OSCORE option, server did not have a suitable context"))
+                            return (
+                                ctx,
+                                Err("No OSCORE option, server did not have a suitable context"),
+                            );
                         };
-                        let Ok(oscore_option) = liboscore::OscoreOption::parse(oscore_option) else {
-                            return (ctx, Err("Server produced invalid OSCORE option"))
+                        let Ok(oscore_option) = liboscore::OscoreOption::parse(oscore_option)
+                        else {
+                            return (ctx, Err("Server produced invalid OSCORE option"));
                         };
 
                         let user_response = liboscore::unprotect_response(
@@ -936,7 +940,10 @@ impl BlePoolBackend {
     /// Try to determine the audience value of a given peer.
     ///
     /// FIXME: This should be less clone-y.
-    async fn try_get_rch<'a>(&'a mut self, id: &'a str) -> Result<RequestCreationHints, &'static str> {
+    async fn try_get_rch<'a>(
+        &'a mut self,
+        id: &'a str,
+    ) -> Result<RequestCreationHints, &'static str> {
         if let Some(rch) = self.rs_identities.get(id) {
             // All is fine already
             return Ok(rch.clone());
@@ -949,7 +956,8 @@ impl BlePoolBackend {
 
         // If we don't get any, it's probably game over here, but no
         // reason to crash
-        self.rs_identities.insert(id.to_string(), rs_identity.clone());
+        self.rs_identities
+            .insert(id.to_string(), rs_identity.clone());
         self.notify_device_list(None).await;
 
         Ok(rs_identity)
@@ -1006,8 +1014,9 @@ impl BlePoolBackend {
         let Ok(request) = Request::new_with_str_and_init(&rch.as_uri, &opts) else {
             // More like "Browser can't even figure out how server would be reached"
             self.set_token(rch.clone(), Failed(MissingTokenReason::ServerUnavailable));
-            self.notify_device_list(Some(NetworkActivity::Failure)).await;
-            return
+            self.notify_device_list(Some(NetworkActivity::Failure))
+                .await;
+            return;
         };
 
         if let Some(authvalue) = self.http_authorization_for(&rch.as_uri) {
@@ -1017,8 +1026,9 @@ impl BlePoolBackend {
         let window = web_sys::window().expect("Running in a browser");
         let Ok(resp_value) = window.fetch_with_request(&request).js2rs().await else {
             self.set_token(rch.clone(), Failed(MissingTokenReason::ServerUnavailable));
-            self.notify_device_list(Some(NetworkActivity::Failure)).await;
-            return
+            self.notify_device_list(Some(NetworkActivity::Failure))
+                .await;
+            return;
         };
 
         let resp: Response = resp_value.try_into().unwrap();
@@ -1029,16 +1039,22 @@ impl BlePoolBackend {
                     .await;
             }
             201 => {
-                let Ok(token_response) = resp.array_buffer() else { return };
-                let Ok(token_response) = token_response.js2rs().await else { return };
+                let Ok(token_response) = resp.array_buffer() else {
+                    return;
+                };
+                let Ok(token_response) = token_response.js2rs().await else {
+                    return;
+                };
                 // There is a view method, but it's too unsafe
                 let token_response = js_sys::Uint8Array::new(&token_response).to_vec();
 
                 use dcaf::ToCborMap;
-                let Ok(token_response) = dcaf::AccessTokenResponse::deserialize_from(token_response.as_slice()) else {
-                        log::error!("Token response could not be parsed");
-                        return
-                    };
+                let Ok(token_response) =
+                    dcaf::AccessTokenResponse::deserialize_from(token_response.as_slice())
+                else {
+                    log::error!("Token response could not be parsed");
+                    return;
+                };
 
                 self.set_token(rch.clone(), Obtained(token_response));
                 self.notify_device_list(Some(NetworkActivity::Success))
@@ -1075,7 +1091,9 @@ impl BlePoolBackend {
         // FIXME: This could be avoided if we didn't use &mut so often during requesting (but we do
         // need exclusvie access to one of the security contexts).
         let token_response = token_response.clone();
-        let Some(dcaf::ProofOfPossessionKey::OscoreInputMaterial(material)) = &token_response.cnf.as_ref() else {
+        let Some(dcaf::ProofOfPossessionKey::OscoreInputMaterial(material)) =
+            &token_response.cnf.as_ref()
+        else {
             log::error!("Token is unusable for the ACE OSCORE profile");
             return;
         };

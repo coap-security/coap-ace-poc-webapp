@@ -19,8 +19,8 @@ gloo-events = "0.1.2"
 console_error_panic_hook = "^0.1.7"
 log = "^0.4"
 console_log = "^0.2"
-wasm-bindgen = "^0.2.83"
-wasm-bindgen-futures = "^0.4.33"
+wasm-bindgen = "^0.2.95"
+wasm-bindgen-futures = "^0.4.45"
 futures = "0.3.25"
 js-sys = "^0.3.60"
 web-sys = { version = "= 0.3.60", features = [ "Navigator" , "Bluetooth", "RequestDeviceOptions", "BluetoothDevice", "BluetoothRemoteGattServer", "BluetoothRemoteGattService", "BluetoothRemoteGattCharacteristic", "BluetoothLeScanFilterInit", "BluetoothCharacteristicProperties"] }
@@ -28,8 +28,9 @@ instant = { version = "0.1.12", features = [ "wasm-bindgen" ] }
 dcaf = { version = "0.3.1", default-features = false }
 url = "2"
 
-coap-message = "0.2.3"
-coap-gatt-utils = { git = "https://gitlab.com/oscore/coap-gatt-utils/" }
+coap-message = "0.3.5"
+coap-message-implementations = { version = "0.1.6", features = [ "alloc" ] }
+coap-gatt-utils = { git = "https://gitlab.com/oscore/coap-gatt-utils/", branch = "v02" }
 coap-numbers = "0.2.0"
 
 ciborium = { version = "0.2", default-features = false }
@@ -38,11 +39,11 @@ ciborium-io = { version = "0.2", default-features = false }
 # one of the key tools when working with CBOR and serde...
 serde_bytes = "0.11"
 
-liboscore = "0.1.0"
-liboscore-msgbackend = { version = "0.1.0", features = [ "alloc" ] }
+liboscore = "0.2.0"
+liboscore-msgbackend = { version = "0.2.0", features = [ "alloc" ] }
 # only to enable the feature
 # liboscore-cryptobackend = { version = "0.1.0", features = [ "log_cryptographic_operations_including_secret_keys" ] }
-ace-oscore-helpers = { git = "https://gitlab.com/oscore/ace-oscore-helpers/", features = [ "liboscore", "alloc" ] }
+ace-oscore-helpers = { git = "https://gitlab.com/oscore/ace-oscore-helpers/", features = [ "liboscore", "alloc" ], branch = "v02" }
 coset = "0.3.3"
 
 rand = "0.8.5"
@@ -62,3 +63,7 @@ built = { version = "0.5.2", features = [ "git2" ] }
 [patch.crates-io]
 coset = { git = "https://github.com/chrysn-pull-requests/coset", branch = "oscore" }
 dcaf = { git = "https://github.com/chrysn-pull-requests/dcaf-rs", branch = "oscore" }
+
+# see https://github.com/trunk-rs/trunk/issues/904#issuecomment-2468825502 for
+# why we're waiting for 0.2.96; this is coordinated with gitlab-ci.yaml
+wasm-bindgen = { git = "https://github.com/rustwasm/wasm-bindgen", rev = "df9893b" }

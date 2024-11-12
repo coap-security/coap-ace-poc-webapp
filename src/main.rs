@@ -457,7 +457,7 @@ extern "C" {
 }
 
 /// Run the default panic handler, but also fan out to [indicate_panic_happened].
-fn panic(info: &core::panic::PanicInfo<'_>) {
+fn panic<'a, 'b>(info: &'a std::panic::PanicHookInfo<'b>) {
     indicate_panic_happened();
     console_error_panic_hook::hook(info);
 }
@@ -468,7 +468,10 @@ pub fn main() {
     // Note that panics before this line would not be caugt, but it's not worth the confusion to
     // pull in console_error_panic_hook just to get that feature one line earlier.
     yew::Renderer::<Model>::new().render();
-    yew::set_custom_panic_hook(Box::new(panic));
+    let panic_hook: Box<
+        dyn for<'a, 'b> Fn(&'a std::panic::PanicHookInfo<'b>) + Send + Sync + 'static,
+    > = Box::new(panic);
+    yew::set_custom_panic_hook(panic_hook);
 
     log::info!("App started.");
 
@@ -487,8 +490,8 @@ pub fn do_oscore_test() -> Result<(), &'static str> {
     // From OSCORE plug test, security context A
     let immutables = liboscore::PrimitiveImmutables::derive(
         liboscore::HkdfAlg::from_number(5).unwrap(),
-        b"\x9e\x7c\xa9\x22\x23\x78\x63\x40",
         b"\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10",
+        b"\x9e\x7c\xa9\x22\x23\x78\x63\x40",
         None,
         liboscore::AeadAlg::from_number(24).unwrap(),
         b"\x01",
@@ -498,7 +501,7 @@ pub fn do_oscore_test() -> Result<(), &'static str> {
 
     let mut primitive = liboscore::PrimitiveContext::new_from_fresh_material(immutables);
 
-    let mut msg = coap_message::heapmessage::HeapMessage::new();
+    let mut msg = coap_message_implementations::heap::HeapMessage::new();
     let oscopt = b"\x09\x00";
     msg.add_option(9, oscopt);
     msg.set_payload(b"\x5c\x94\xc1\x29\x80\xfd\x93\x68\x4f\x37\x1e\xb2\xf5\x25\xa2\x69\x3b\x47\x4d\x5e\x37\x16\x45\x67\x63\x74\xe6\x8d\x4c\x20\x4a\xdb");
