@@ -32,6 +32,7 @@
 //! The file `./.gitlab-ci` contains concrete commands for all these steps.
 
 use yew::prelude::*;
+use yew_oauth2::openid::OAuth2;
 
 mod authorizations;
 mod ble;
@@ -295,7 +296,23 @@ impl Component for Model {
             classes!["network"]
         };
 
+        // // URIs for keycloak as running with yew-oauth2's docker compose setup
+        // //
+        // // In case of trouble with logging in in the first place, this is a good fallback to
+        // // explore; won't get far beyond login because it's not an ACE AS.
+        // let oauth_config = yew_oauth2::openid::Config::new(
+        //     "example",
+        //     "http://localhost:8081/realms/master",
+        // );
+        // URIs for keycloak as running the keycloak-ace-extensions/playground with the
+        // ace_as container configured with `ports:` / `- "1103:8080"`
+        let oauth_config = yew_oauth2::openid::Config::new(
+            "webapp-dev",
+            "http://localhost:1103/realms/edf",
+        );
+
         html! {
+            <OAuth2 config={oauth_config}>
             <div>
                 <h1>{ "CoAP ACE PoC: The App" }</h1>
                 <p id="crashreport" style="display:none">{ "This application has crashed, this is a bug. Additional details are available in the browser's console, please report them at " }<a href={built_info::PKG_REPOSITORY}>{ "the application's source" }</a>{ "." } </p>
@@ -335,6 +352,7 @@ impl Component for Model {
                     </p>
                 </footer>
             </div>
+            </OAuth2>
         }
     }
 }
