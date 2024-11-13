@@ -306,10 +306,8 @@ impl Component for Model {
         // );
         // URIs for keycloak as running the keycloak-ace-extensions/playground with the
         // ace_as container configured with `ports:` / `- "1103:8080"`
-        let oauth_config = yew_oauth2::openid::Config::new(
-            "webapp-dev",
-            "http://localhost:1103/realms/edf",
-        );
+        let oauth_config =
+            yew_oauth2::openid::Config::new("webapp-dev", "http://localhost:1103/realms/edf");
 
         html! {
             <OAuth2 config={oauth_config}>
