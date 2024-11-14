@@ -37,7 +37,7 @@ use yew_oauth2::openid::OAuth2;
 mod authorizations;
 mod ble;
 mod helpers;
-use helpers::PromiseExt;
+use helpers::{PromiseExt, ViewLocalizedClaim};
 
 use ble::DeviceId;
 
@@ -334,7 +334,9 @@ impl Component for Model {
                     <p><input type="submit" value="Request token manually" /></p>
                 </form>
                 </details>
-                <h2>{ "Logins" }</h2>
+                <h2>{ "Logins (OAuth)" }</h2>
+                <LoginView />
+                <h2>{ "Logins (2022 demo)" }</h2>
                 { self.view_login_list(ctx) }
                 <footer>
                     <p class={ netclass }>{ "Internet connection " }{ if self.browser_is_online { "available, " } else { "unavailable, " }}<label><input type="checkbox" checked={ self.force_offline } onchange={ ctx.link().callback(|_| ToggleForceOffline) } />{ " force offline mode" }</label></p>
@@ -353,6 +355,61 @@ impl Component for Model {
             </OAuth2>
         }
     }
+}
+
+#[function_component(LoginView)]
+fn login_view() -> Html {
+    use yew_oauth2::openid::use_auth_agent;
+    use yew_oauth2::prelude::{
+        Authenticated, Authentication, Failure, FailureMessage, NotAuthenticated, OAuth2Context,
+        OAuth2Operations,
+    };
+
+    let agent = use_auth_agent().expect("Must be nested inside an OAuth2 component");
+    let auth = use_context::<OAuth2Context>().expect("Must be nested inside an OAuth2 context");
+
+    // Events prevent default to be usable with <a> links that are still accessible as links
+    let login = use_callback(agent.clone(), |event: MouseEvent, agent| {
+        event.prevent_default();
+        agent.start_login();
+    });
+    let logout = use_callback(agent, |event: MouseEvent, agent| {
+        event.prevent_default();
+        agent.logout();
+    });
+
+    html!(
+      <ul>
+        <li>{ "At OAuth Authorization Server: "}
+        // Using Failure/Authenticated/... for simplicity, but we could probably also juste as well work on auth
+        <Failure>{"Login failure: "}<FailureMessage/></Failure>
+        <Authenticated>
+          {"Logged in as "}
+          if let OAuth2Context::Authenticated(Authentication { claims: Some(claims), .. }) = &auth {
+              <>if let Some(name) = claims.name() {
+                  <ViewLocalizedClaim<openidconnect::EndUserName> claim={std::rc::Rc::new(name.to_owned())} />
+              }
+              if let Some(nickname) = claims.nickname() {
+                  // Showing nickname name because unlike full name we can make keycloak publish
+                  // them localized, eg. if we claim all our nicknames are German by setting
+                  // Client scopes / profile / mappers / nickname / TokenClaim Name to
+                  // "nickname#de" -- mainly this demos that ViewLocalizedClaim really does
+                  // something useful.
+                  {" ("}<ViewLocalizedClaim<openidconnect::EndUserNickname> claim={std::rc::Rc::new(nickname.to_owned())} />{")"}
+              }
+              </>
+          } else {
+              { "… well actually not logged in (please report how this happened)" }
+          }
+          {"; "}
+          <a onclick={logout} href="#prevent_me">{ "Logout" }</a>
+        </Authenticated>
+        <NotAuthenticated>
+          {"Not logged in; "}<a onclick={login} href="#prevent_me">{ "Login" }</a>
+        </NotAuthenticated>
+        </li>
+      </ul>
+    )
 }
 
 impl Model {
