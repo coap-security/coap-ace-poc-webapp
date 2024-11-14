@@ -743,8 +743,10 @@ impl BlePoolBackend {
             |request| {
                 use coap_message::MinimalWritableMessage;
                 request.set_code(coap_numbers::code::PUT.try_into().unwrap());
-                request.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"time");
-                request.set_payload(&time_now_buffer);
+                request
+                    .add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"time")
+                    .unwrap();
+                request.set_payload(&time_now_buffer).unwrap();
             },
             |response, ()| {
                 use coap_message::ReadableMessage;
@@ -767,8 +769,9 @@ impl BlePoolBackend {
             |request| {
                 use coap_message::MinimalWritableMessage;
                 request.set_code(coap_numbers::code::GET.try_into().unwrap());
-                request.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"temp");
-                request.set_payload(&[]);
+                request
+                    .add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"temp")
+                    .unwrap();
             },
             |response, ()| {
                 use coap_message::ReadableMessage;
@@ -789,8 +792,9 @@ impl BlePoolBackend {
             |request| {
                 use coap_message::MinimalWritableMessage;
                 request.set_code(coap_numbers::code::GET.try_into().unwrap());
-                request.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"temp");
-                request.set_payload(&[]);
+                request
+                    .add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"temp")
+                    .unwrap();
             },
             |response, ()| {
                 use coap_message::ReadableMessage;
@@ -836,11 +840,12 @@ impl BlePoolBackend {
             |request| {
                 use coap_message::MinimalWritableMessage;
                 request.set_code(coap_numbers::code::POST.try_into().unwrap());
-                request.add_option(
-                    coap_numbers::option::URI_PATH.try_into().unwrap(),
-                    b"identify",
-                );
-                request.set_payload(&[]);
+                request
+                    .add_option(
+                        coap_numbers::option::URI_PATH.try_into().unwrap(),
+                        b"identify",
+                    )
+                    .unwrap();
             },
             |_, ()| {},
         )
@@ -859,8 +864,10 @@ impl BlePoolBackend {
             |request| {
                 use coap_message::MinimalWritableMessage;
                 request.set_code(coap_numbers::code::PUT.try_into().unwrap());
-                request.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"leds");
-                request.set_payload(&level_buffer);
+                request
+                    .add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"leds")
+                    .unwrap();
+                request.set_payload(&level_buffer).unwrap();
             },
             |_, ()| {},
         )
@@ -905,8 +912,9 @@ impl BlePoolBackend {
                 request.add_option(
                     coap_numbers::option::URI_PATH.try_into().unwrap(),
                     b"authz-info",
-                );
-                request.set_payload(&payload);
+                ).unwrap();
+                request.set_payload(&payload)
+                    .unwrap();
             },
             |response, ()| {
                 use coap_message::ReadableMessage;

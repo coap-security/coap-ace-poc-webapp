@@ -37,7 +37,7 @@ use yew_oauth2::openid::OAuth2;
 mod authorizations;
 mod ble;
 mod helpers;
-use helpers::{PromiseExt, ViewLocalizedClaim};
+use helpers::ViewLocalizedClaim;
 
 use ble::DeviceId;
 
@@ -371,11 +371,15 @@ fn login_view() -> Html {
     // Events prevent default to be usable with <a> links that are still accessible as links
     let login = use_callback(agent.clone(), |event: MouseEvent, agent| {
         event.prevent_default();
-        agent.start_login();
+        if let Err(e) = agent.start_login() {
+            log::error!("Error logging in: {e:?}");
+        }
     });
     let logout = use_callback(agent, |event: MouseEvent, agent| {
         event.prevent_default();
-        agent.logout();
+        if let Err(e) = agent.logout() {
+            log::error!("Error logging out: {e:?}");
+        }
     });
 
     html!(
@@ -576,8 +580,11 @@ pub fn do_oscore_test() -> Result<(), &'static str> {
 
     let mut msg = coap_message_implementations::heap::HeapMessage::new();
     let oscopt = b"\x09\x00";
-    msg.add_option(9, oscopt);
-    msg.set_payload(b"\x5c\x94\xc1\x29\x80\xfd\x93\x68\x4f\x37\x1e\xb2\xf5\x25\xa2\x69\x3b\x47\x4d\x5e\x37\x16\x45\x67\x63\x74\xe6\x8d\x4c\x20\x4a\xdb");
+    msg.add_option(9, oscopt)
+        .expect("Heap message operations are infallible");
+    msg
+        .set_payload(b"\x5c\x94\xc1\x29\x80\xfd\x93\x68\x4f\x37\x1e\xb2\xf5\x25\xa2\x69\x3b\x47\x4d\x5e\x37\x16\x45\x67\x63\x74\xe6\x8d\x4c\x20\x4a\xdb")
+        .expect("Heap message operations are infallible");
 
     liboscore_msgbackend::with_heapmessage_as_msg_native(msg, |msg| {
         unsafe {
