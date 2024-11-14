@@ -1057,11 +1057,17 @@ impl BlePoolBackend {
                 let token_response = js_sys::Uint8Array::new(&token_response).to_vec();
 
                 use dcaf::ToCborMap;
-                let Ok(token_response) =
-                    dcaf::AccessTokenResponse::deserialize_from(token_response.as_slice())
-                else {
-                    log::error!("Token response could not be parsed");
-                    return;
+                let parsed = dcaf::AccessTokenResponse::deserialize_from(token_response.as_slice());
+                let token_response = match parsed {
+                    Ok(p) => p,
+                    Err(e) => {
+                        log::error!(
+                            "Token response could not be parsed (got: {:02x?}, error: {:?})",
+                            token_response,
+                            e
+                        );
+                        return;
+                    }
                 };
 
                 self.set_token(rch.clone(), Obtained(token_response));
