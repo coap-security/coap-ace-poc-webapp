@@ -71,3 +71,8 @@ dcaf = { git = "https://github.com/chrysn-pull-requests/dcaf-rs", branch = "osco
 # see https://github.com/trunk-rs/trunk/issues/904#issuecomment-2468825502 for
 # why we're waiting for 0.2.96; this is coordinated with gitlab-ci.yaml
 wasm-bindgen = { git = "https://github.com/rustwasm/wasm-bindgen", rev = "df9893b" }
+
+# avoiding https://gitlab.com/oscore/liboscore/-/merge_requests/10
+liboscore = { git = "https://gitlab.com/oscore/liboscore.git", rev = "b0158334" }
+liboscore-msgbackend = { git = "https://gitlab.com/oscore/liboscore.git", rev = "b0158334" }
+liboscore-cryptobackend = { git = "https://gitlab.com/oscore/liboscore.git", rev = "b0158334" }
