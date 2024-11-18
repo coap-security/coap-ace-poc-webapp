@@ -540,7 +540,13 @@ fn panic<'a, 'b>(info: &'a std::panic::PanicHookInfo<'b>) {
 }
 
 pub fn main() {
-    console_log::init_with_level(log::Level::Debug).expect("Console not available for logging");
+    fern::Dispatch::new()
+        .level(log::LevelFilter::Debug)
+        // yew_oauth2 is *very* verbose, let's keep that out by default
+        .level_for("yew_oauth2", log::LevelFilter::Info)
+        .chain(fern::Output::call(console_log::log))
+        .apply()
+        .expect("Logging setup failed");
 
     // Note that panics before this line would not be caugt, but it's not worth the confusion to
     // pull in console_error_panic_hook just to get that feature one line earlier.

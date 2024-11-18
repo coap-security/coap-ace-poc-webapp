@@ -4,7 +4,7 @@
 # SPDX-FileCopyrightText: Copyright 2022 EDF (Électricité de France S.A.)
 # SPDX-License-Identifier: BSD-3-Clause
 # See README for all details on copyright, authorship and license.
-version = 3
+version = 4
 
 [[package]]
 name = "ace-oscore-helpers"
@@ -461,6 +461,7 @@ dependencies = [
  "console_log",
  "coset",
  "dcaf",
+ "fern",
  "futures",
  "getrandom",
  "gloo-events 0.1.2",
@@ -557,11 +558,12 @@ dependencies = [
 
 [[package]]
 name = "console_log"
-version = "0.2.2"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e89f72f65e8501878b8a004d5a1afb780987e2ce2b4532c562e367a72c57499f"
+checksum = "be8aed40e4edbf4d3b4431ab260b63fdc40f5780a4766824329ea0f1eefe3c0f"
 dependencies = [
  "log",
+ "wasm-bindgen",
  "web-sys",
 ]
 
@@ -1045,6 +1047,15 @@ name = "fastrand"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "486f806e73c5707928240ddc295403b1b93c96a02038563881c4a2fd84b81ac4"
+
+[[package]]
+name = "fern"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69ff9c9d5fb3e6da8ac2f77ab76fe7e8087d512ce095200f8f29ac5b656cf6dc"
+dependencies = [
+ "log",
+]
 
 [[package]]
 name = "ff"
