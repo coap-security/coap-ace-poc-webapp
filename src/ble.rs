@@ -74,7 +74,9 @@ pub enum FrontToBackMessage {
     /// ask the browser to disconnect it.
     Disconnect(DeviceId),
 
+    // The non-BLE things we set because token acquisition has grown in here
     SetForceOffline(bool),
+    AsTokenAvailable((String, Option<String>)),
 }
 use FrontToBackMessage::*;
 
@@ -180,6 +182,9 @@ struct BlePoolBackend {
     /// This only makes sense in a demo; in production code, this would be ripped out without
     /// replacement.
     force_offline: bool,
+
+    /// Tokens usable for interactions with ASs
+    as_tokens: std::collections::HashMap<String, String>,
 }
 
 /// A BLE characteristic (from which the device, GATT and other JavaScript components can be
@@ -204,7 +209,10 @@ impl BlePool {
         let bluetooth = navigator.bluetooth().ok_or(NoWebBluetoothSupport)?;
 
         // This can overflow; ideally, the front-end will disable its buttons while full
-        let front2back = futures::channel::mpsc::channel(1);
+        // Having more than 1 in here because this includes
+        // * messages from users clicking and
+        // * Availability updates on AS tokens.
+        let front2back = futures::channel::mpsc::channel(2);
         // This won't overflow realistically: everything that pushes in here can just wait
         let back2front = futures::channel::mpsc::channel(1);
 
@@ -263,10 +271,11 @@ impl BlePool {
     /// Request an action asynchronously from the backend.
     ///
     /// The backend will probably send notifications back at some point.
-    fn request(&mut self, message: FrontToBackMessage) {
+    // FIXME do we want to have this really public?
+    pub fn request(&mut self, message: FrontToBackMessage) {
         self.front2back.try_send(message)
-            .unwrap_or_else(|_| {
-                log::error!("Can not enqueue request: queue full. Proper queue management that disables buttons when the queue is full would circumvent that.");
+            .unwrap_or_else(|e| {
+                log::error!("Can not enqueue request: queue full. Proper queue management that disables buttons when the queue is full would circumvent that ({:?}).", e);
             });
     }
 
@@ -479,6 +488,7 @@ impl BlePoolBackend {
             tokens: Default::default(),
             security_contexts: Default::default(),
             force_offline: false,
+            as_tokens: Default::default(),
         };
 
         loop {
@@ -559,6 +569,13 @@ impl BlePoolBackend {
                 }
                 Some(SetForceOffline(force_offline)) => {
                     self_.force_offline = force_offline;
+                }
+                Some(AsTokenAvailable((endpoint, token))) => {
+                    if let Some(token) = token {
+                        self_.as_tokens.insert(endpoint, token);
+                    } else {
+                        self_.as_tokens.remove(&endpoint);
+                    }
                 }
                 // Whatever spawned us doesn't want us any more
                 None => break,
@@ -1013,10 +1030,29 @@ impl BlePoolBackend {
             .expect("Map can be encoded");
         let body = js_sys::Uint8Array::from(request_buffer.as_slice());
         let mut opts = RequestInit::new();
+        // FIXME: starts_with is just a guess here
+        let suitable_token = self
+            .as_tokens
+            .iter()
+            .filter_map(|(k, v)| rch.as_uri.starts_with(k).then_some(v))
+            .next();
+        let Some(suitable_token) = suitable_token else {
+            // FIXME: Trigger login or otherwise flash GUI
+            log::error!("No token available, won't expect the AS to issue a token just so.");
+            return;
+        };
+        let headers = js_sys::Object::new();
+        use js_sys::Reflect;
+        Reflect::set(
+            &headers,
+            &"Authorization".into(),
+            &format!("Bearer {}", suitable_token).into(),
+        )
+        .unwrap();
         opts.method("POST")
             .mode(RequestMode::Cors)
-            .credentials(RequestCredentials::Omit) // Third party cookies would be blocked
-            // anyway
+            .credentials(RequestCredentials::Omit)
+            .headers(headers.as_ref())
             .body(Some(&body));
 
         let Ok(request) = Request::new_with_str_and_init(&rch.as_uri, &opts) else {

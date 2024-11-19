@@ -45,7 +45,11 @@ pub mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
 
-const DEMO_AS: &str = "https://as.coap.amsuess.com/token";
+const DEMO_AS: &str = "http://localhost:1103/realms/edf/ace-oauth/token";
+// Currently static while we only have a single OAuth server; until yew_oauth2::agent::Agent learns
+// to tell about its configuration, this information may need to be sent along with multiple OAuth2
+// elements later.
+const OAUTH_ENTRY: &'static str = "http://localhost:1103/realms/edf";
 
 /// Main application component
 ///
@@ -87,6 +91,9 @@ enum Message {
 
     BrowserOnlineChanged(bool),
     NoOp,
+
+    /// For a given OIDC endpoint .0, an OAuth login component has found a token .1
+    AsTokenAvailable((String, Option<String>)),
 
     /// Remove a URI from the list of currently logged-in-to ASes
     LogoutFrom(String),
@@ -262,6 +269,14 @@ impl Component for Model {
                 true
             }
 
+            AsTokenAvailable(details) => {
+                // FIXME should we spool those in case?
+                if let Some(pool) = self.blepool.as_mut() {
+                    pool.request(ble::FrontToBackMessage::AsTokenAvailable(details));
+                }
+                false
+            }
+
             NoOp => false,
         }
     }
@@ -306,11 +321,9 @@ impl Component for Model {
         // );
         // URIs for keycloak as running the keycloak-ace-extensions/playground with the
         // ace_as container configured with `ports:` / `- "1103:8080"`
-        let oauth_config =
-            yew_oauth2::openid::Config::new("webapp-dev", "http://localhost:1103/realms/edf");
+        let oauth_config = yew_oauth2::openid::Config::new("webapp-dev", OAUTH_ENTRY);
 
         html! {
-            <OAuth2 config={oauth_config}>
             <div>
                 <h1>{ "CoAP ACE PoC: The App" }</h1>
                 <p id="crashreport" style="display:none">{ "This application has crashed, this is a bug. Additional details are available in the browser's console, please report them at " }<a href={built_info::PKG_REPOSITORY}>{ "the application's source" }</a>{ "." } </p>
@@ -335,7 +348,13 @@ impl Component for Model {
                 </form>
                 </details>
                 <h2>{ "Logins (OAuth)" }</h2>
-                <LoginView />
+                    // We could have multiple of them conceptually, because we send the tokens out
+                    // anyway (from this model's PoV it's inner either way, don't need to go
+                    // top-level in there), but until we dan do OAuth in popups, we can't have
+                    // multiple ASs.
+                    <OAuth2 config={oauth_config}>
+                        <LoginView on_access_token_available={ link.callback(Message::AsTokenAvailable) } />
+                    </OAuth2>
                 <h2>{ "Logins (2022 demo)" }</h2>
                 { self.view_login_list(ctx) }
                 <footer>
@@ -352,21 +371,33 @@ impl Component for Model {
                     </p>
                 </footer>
             </div>
-            </OAuth2>
         }
     }
 }
 
+#[derive(PartialEq, Properties)]
+struct LoginViewProps {
+    on_access_token_available: Callback<(String, Option<String>)>,
+}
+
 #[function_component(LoginView)]
-fn login_view() -> Html {
+fn login_view(props: &LoginViewProps) -> Html {
     use yew_oauth2::openid::use_auth_agent;
     use yew_oauth2::prelude::{
         Authenticated, Authentication, Failure, FailureMessage, NotAuthenticated, OAuth2Context,
         OAuth2Operations,
     };
 
+    // Reminder to readers unfamiliar with yew's function_component: The macro rewrites every
+    // top-level function call to `use_` into a wrapper that allows that function to access the
+    // context and otherwise do more.
     let agent = use_auth_agent().expect("Must be nested inside an OAuth2 component");
     let auth = use_context::<OAuth2Context>().expect("Must be nested inside an OAuth2 context");
+
+    props.on_access_token_available.emit((
+        OAUTH_ENTRY.to_string(),
+        auth.access_token().map(String::from),
+    ));
 
     // Events prevent default to be usable with <a> links that are still accessible as links
     let login = use_callback(agent.clone(), |event: MouseEvent, agent| {
