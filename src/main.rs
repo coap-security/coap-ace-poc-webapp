@@ -51,6 +51,9 @@ pub mod built_info {
 /// feedback from talking to the ACE AS which it currently does not provide. (The function will
 /// need to change because it'll need access to some storage and different lifetimes, but having
 /// the function enables finding where it'll be needed).
+///
+/// Resolving this depends on
+/// <https://gitlab.com/ace-oauth-poc-prerelease/keycloak-ace-extension/-/issues/1>
 pub(crate) fn ace_as_to_oauth_entry(ace_as: &str) -> Option<&str> {
     ace_as.strip_suffix("/ace-oauth/token")
 }
