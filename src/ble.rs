@@ -1032,25 +1032,25 @@ impl BlePoolBackend {
             return;
         };
 
-        // FIXME: starts_with is just a guess here
-        let suitable_token = self
-            .as_tokens
-            .iter()
-            .filter_map(|(k, v)| rch.as_uri.starts_with(k).then_some(v))
-            .next();
-        if let Some(suitable_token) = suitable_token {
-            request
-                .headers()
-                .set("Authorization", &format!("Bearer {}", suitable_token))
-                .unwrap();
-        };
+        if let Some(suitable_openid_endpoint) = crate::ace_as_to_oauth_entry(&rch.as_uri) {
+            if let Some(suitable_token) = self.as_tokens.get(suitable_openid_endpoint) {
+                request
+                    .headers()
+                    .set("Authorization", &format!("Bearer {}", suitable_token))
+                    .unwrap();
+            };
+        }
 
         let window = web_sys::window().expect("Running in a browser");
         let fetch_result = window.fetch_with_request(&request).js2rs().await;
         let Ok(resp_value) = fetch_result else {
-            // FIXME: Either enhance the request's chances of showing us the error properly, or
-            // start running heuristics towards an Unauthorized.
-            self.set_token(rch.clone(), Failed(MissingTokenReason::ServerUnavailable));
+            // FIXME: Either enhance the request's chances of showing us the error properly
+            // (populating the replacement for ace_as_to_oauth_entry), or run
+            // ace_as_to_oauth_entry -- and then populate the logins list.
+            // (But practically populating that list works best when we have popup logins).
+            // FIXME can't distinguish this from MissingTokenReason::ServerUnavailable without such
+            // an output.
+            self.set_token(rch.clone(), Failed(MissingTokenReason::Unauthorized));
             self.notify_device_list(Some(NetworkActivity::Failure))
                 .await;
             return;

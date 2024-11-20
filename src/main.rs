@@ -44,11 +44,18 @@ pub mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
 
+/// Convert the /token endpoint of an ACE AS (which issues tokens for CoAP) into the OAuth endtry
+/// URI the user needs to be logged in to in order to interact with it.
+///
+/// This is currently a string processing function, which is bad, but to we'll need error response
+/// feedback from talking to the ACE AS which it currently does not provide. (The function will
+/// need to change because it'll need access to some storage and different lifetimes, but having
+/// the function enables finding where it'll be needed).
+pub(crate) fn ace_as_to_oauth_entry(ace_as: &str) -> Option<&str> {
+    ace_as.strip_suffix("/ace-oauth/token")
+}
+
 const DEMO_AS: &str = "http://localhost:1103/realms/edf/ace-oauth/token";
-// Currently static while we only have a single OAuth server; until yew_oauth2::agent::Agent learns
-// to tell about its configuration, this information may need to be sent along with multiple OAuth2
-// elements later.
-const OAUTH_ENTRY: &'static str = "http://localhost:1103/realms/edf";
 
 /// Main application component
 ///
@@ -183,8 +190,8 @@ impl Component for Model {
         // URIs for keycloak as running the keycloak-ace-extensions/playground with the
         // ace_as container configured with `ports:` / `- "1103:8080"`
         oauth_configs.insert(
-            OAUTH_ENTRY.into(),
-            yew_oauth2::openid::Config::new("webapp-dev", OAUTH_ENTRY),
+            ace_as_to_oauth_entry(DEMO_AS).unwrap().into(),
+            yew_oauth2::openid::Config::new("webapp-dev", ace_as_to_oauth_entry(DEMO_AS).unwrap()),
         );
 
         Model {
