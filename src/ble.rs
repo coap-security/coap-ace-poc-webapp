@@ -988,17 +988,6 @@ impl BlePoolBackend {
         Ok(rs_identity)
     }
 
-    /// For a given token path, find any Authorization value we have available
-    fn http_authorization_for(&self, token_uri: &str) -> Option<String> {
-        for (uri, authorization, _) in crate::authorizations::current_authorizations() {
-            if token_uri == uri {
-                // which would be None where we're not logged in, and that's fine
-                return Some(authorization);
-            }
-        }
-        None
-    }
-
     /// Try to fetch a token from the AS for the audience the RS claimed to be
     ///
     /// Currently fails silently if there is no rs_identities entry.
@@ -1030,29 +1019,9 @@ impl BlePoolBackend {
             .expect("Map can be encoded");
         let body = js_sys::Uint8Array::from(request_buffer.as_slice());
         let mut opts = RequestInit::new();
-        // FIXME: starts_with is just a guess here
-        let suitable_token = self
-            .as_tokens
-            .iter()
-            .filter_map(|(k, v)| rch.as_uri.starts_with(k).then_some(v))
-            .next();
-        let Some(suitable_token) = suitable_token else {
-            // FIXME: Trigger login or otherwise flash GUI
-            log::error!("No token available, won't expect the AS to issue a token just so.");
-            return;
-        };
-        let headers = js_sys::Object::new();
-        use js_sys::Reflect;
-        Reflect::set(
-            &headers,
-            &"Authorization".into(),
-            &format!("Bearer {}", suitable_token).into(),
-        )
-        .unwrap();
         opts.method("POST")
             .mode(RequestMode::Cors)
             .credentials(RequestCredentials::Omit)
-            .headers(headers.as_ref())
             .body(Some(&body));
 
         let Ok(request) = Request::new_with_str_and_init(&rch.as_uri, &opts) else {
@@ -1063,12 +1032,24 @@ impl BlePoolBackend {
             return;
         };
 
-        if let Some(authvalue) = self.http_authorization_for(&rch.as_uri) {
-            request.headers().set("Authorization", &authvalue).unwrap();
-        }
+        // FIXME: starts_with is just a guess here
+        let suitable_token = self
+            .as_tokens
+            .iter()
+            .filter_map(|(k, v)| rch.as_uri.starts_with(k).then_some(v))
+            .next();
+        if let Some(suitable_token) = suitable_token {
+            request
+                .headers()
+                .set("Authorization", &format!("Bearer {}", suitable_token))
+                .unwrap();
+        };
 
         let window = web_sys::window().expect("Running in a browser");
-        let Ok(resp_value) = window.fetch_with_request(&request).js2rs().await else {
+        let fetch_result = window.fetch_with_request(&request).js2rs().await;
+        let Ok(resp_value) = fetch_result else {
+            // FIXME: Either enhance the request's chances of showing us the error properly, or
+            // start running heuristics towards an Unauthorized.
             self.set_token(rch.clone(), Failed(MissingTokenReason::ServerUnavailable));
             self.notify_device_list(Some(NetworkActivity::Failure))
                 .await;
@@ -1077,6 +1058,7 @@ impl BlePoolBackend {
 
         let resp: Response = resp_value.try_into().unwrap();
         match resp.status() {
+            // FIXME: With OAuth we don't get those
             401 => {
                 self.set_token(rch.clone(), Failed(MissingTokenReason::Unauthorized));
                 self.notify_device_list(Some(NetworkActivity::Success))

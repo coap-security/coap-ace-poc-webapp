@@ -34,7 +34,6 @@
 use yew::prelude::*;
 use yew_oauth2::openid::OAuth2;
 
-mod authorizations;
 mod ble;
 mod helpers;
 use helpers::ViewLocalizedClaim;
@@ -96,9 +95,6 @@ enum Message {
 
     /// For a given OIDC endpoint .0, an OAuth login component has found a token .1
     AsTokenAvailable((String, Option<String>)),
-
-    /// Remove a URI from the list of currently logged-in-to ASes
-    LogoutFrom(String),
 
     SetManualDeviceAsUri(String),
     SetManualDeviceAudience(String),
@@ -249,14 +245,6 @@ impl Component for Model {
                 false
             }
 
-            LogoutFrom(uri) => {
-                web_sys::window()
-                    .unwrap()
-                    .location()
-                    .set_href(&authorizations::link_for_logout(&uri))
-                    .unwrap();
-                true
-            }
             SetManualDeviceAsUri(s) => {
                 self.manual_device_as_uri = s;
                 false
@@ -460,31 +448,6 @@ fn login_view(props: &LoginViewProps) -> Html {
 }
 
 impl Model {
-    fn view_login_list(&self, ctx: &Context<Self>) -> Html {
-        let link = ctx.link();
-        let logins = authorizations::current_authorizations();
-        let known_as = authorizations::known_as_not_logged_in();
-        if logins.is_empty() && known_as.is_empty() {
-            html! { <p>{ "Logins will be added automatically as required to obtain tokens." }</p> }
-        } else {
-            html! {
-                <>
-                <ul>{ for logins.iter().map(|(uri, _, descr)| {
-                    // FIXME Some of this cloning is necessary due to link.callback taking a Fn
-                    // rather than a FnOnce, but some might be avoided
-                    let uri2 = uri.clone();
-                    html! { <li>{ uri.clone() }{ descr.as_ref().map(|d| format!(" (as {}) ", d)).unwrap_or(" ".to_string()) }<button onclick={link.callback(move |_| LogoutFrom(uri2.clone()))}>{ "Logout" }</button></li> }
-                })
-                }</ul>
-                <ul>{ for known_as.iter().filter_map(|tu| authorizations::build_login_uri(tu).ok()).map(|(full_href, display_uri)| {
-                    html! { <li><a href={ full_href }>{ "Login" }</a>{ " to " }{ &display_uri }</li> }
-                })
-                }</ul>
-                </>
-            }
-        }
-    }
-
     fn view_bluetooth_list(&self, ctx: &Context<Self>) -> Html {
         let link = ctx.link();
 
@@ -547,11 +510,10 @@ impl Model {
                                 // We've already had the special treatment for Unauthorized above
                                 Some(ble::MissingTokenReason::Unauthorized) => {
                                     if let Some(rs_identity) = &con.rs_identity {
-                                        if let Ok((href, without_query)) = authorizations::build_login_uri(&rs_identity.as_uri) {
-                                            html! { <b>{ "Login required through " }<a href={ href }>{ without_query }</a></b> }
-                                        } else {
-                                            "none available (invalid AS)".into()
-                                        }
+                                        // FIXME: Populate into known-AS list, possibly with
+                                        // pre-processing (ACE token endpoint -> OpenID path), or
+                                        // can we even have a login button directly here?
+                                        html! { <b>{ format!("Login required through {:?}", rs_identity) }</b> }
                                     } else {
                                         "none available (AS not yet known)".into()
                                     }
