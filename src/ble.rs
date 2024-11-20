@@ -1013,7 +1013,20 @@ impl BlePoolBackend {
         use web_sys::{Request, RequestCredentials, RequestInit, RequestMode, Response};
 
         let mut token_request = std::collections::HashMap::new();
-        token_request.insert(5u8, &rch.audience);
+        token_request.insert(
+            5u8, // audience
+            ciborium::Value::from(rch.audience.clone()),
+        );
+        // We could use dcaf's TokenRequest builder here, but that won't allow us to specify the
+        // profile. 9200 is a bit inexact here in that it talks twice of that the use can specify
+        // null here (in 5.8.4.3 and 5.8.1), but is nowhere explicit that setting a concrete
+        // profile is fine as well (and dcaf only sends empty values).
+        // See <https://github.com/namib-project/dcaf-rs/issues/28>
+        token_request.insert(
+            38u8,                       // ace_profile
+            ciborium::Value::from(2u8), // coap_oscore
+        );
+        // token_request.insert(38u8, ciborium::Value::from(4u8)); // ace_profile: coap_edhoc_oscore
         let mut request_buffer = Vec::with_capacity(50);
         ciborium::ser::into_writer(&token_request, &mut request_buffer)
             .expect("Map can be encoded");
