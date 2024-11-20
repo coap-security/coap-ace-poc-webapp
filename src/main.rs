@@ -63,6 +63,8 @@ struct Model {
     manual_device_as_uri: String,
     manual_device_audience: String,
 
+    oauth_configs: std::collections::HashMap<std::rc::Rc<str>, yew_oauth2::openid::Config>,
+
     /// Shall we pretend the browser was offline?
     force_offline: bool,
     /// Cached state of window.on_line()
@@ -170,12 +172,32 @@ impl Component for Model {
             },
         )));
 
+        let mut oauth_configs = std::collections::HashMap::default();
+        // URIs for keycloak as running with yew-oauth2's docker compose setup
+        //
+        // In case of trouble with logging in in the first place, this is a good fallback to
+        // explore; won't get far beyond login because it's not an ACE AS.
+        //
+        // This is currently disabled becasue of <https://github.com/ctron/yew-oauth2/issues/43> --
+        // having more than one in breaks things occasionally.
+        // oauth_configs.insert(
+        //     "http://localhost:8081/realms/master".into(),
+        //     yew_oauth2::openid::Config::new("example", "http://localhost:8081/realms/master"),
+        // );
+        // URIs for keycloak as running the keycloak-ace-extensions/playground with the
+        // ace_as container configured with `ports:` / `- "1103:8080"`
+        oauth_configs.insert(
+            OAUTH_ENTRY.into(),
+            yew_oauth2::openid::Config::new("webapp-dev", OAUTH_ENTRY),
+        );
+
         Model {
             blepool,
             manual_device_as_uri: DEMO_AS.to_string(),
             manual_device_audience: "d01".to_string(),
             force_offline: false,
             browser_is_online: web_sys::window().unwrap().navigator().on_line(),
+            oauth_configs,
         }
     }
 
@@ -311,18 +333,6 @@ impl Component for Model {
             classes!["network"]
         };
 
-        // // URIs for keycloak as running with yew-oauth2's docker compose setup
-        // //
-        // // In case of trouble with logging in in the first place, this is a good fallback to
-        // // explore; won't get far beyond login because it's not an ACE AS.
-        // let oauth_config = yew_oauth2::openid::Config::new(
-        //     "example",
-        //     "http://localhost:8081/realms/master",
-        // );
-        // URIs for keycloak as running the keycloak-ace-extensions/playground with the
-        // ace_as container configured with `ports:` / `- "1103:8080"`
-        let oauth_config = yew_oauth2::openid::Config::new("webapp-dev", OAUTH_ENTRY);
-
         html! {
             <div>
                 <h1>{ "CoAP ACE PoC: The App" }</h1>
@@ -347,16 +357,18 @@ impl Component for Model {
                     <p><input type="submit" value="Request token manually" /></p>
                 </form>
                 </details>
-                <h2>{ "Logins (OAuth)" }</h2>
+                <h2>{ "Logins" }</h2>
                     // We could have multiple of them conceptually, because we send the tokens out
                     // anyway (from this model's PoV it's inner either way, don't need to go
                     // top-level in there), but until we dan do OAuth in popups, we can't have
                     // multiple ASs.
-                    <OAuth2 config={oauth_config}>
-                        <LoginView on_access_token_available={ link.callback(Message::AsTokenAvailable) } />
-                    </OAuth2>
-                <h2>{ "Logins (2022 demo)" }</h2>
-                { self.view_login_list(ctx) }
+                    { for self.oauth_configs.iter().map(|(key, config)| {
+                        html! { <li key={key.clone()}>
+                            <OAuth2 config={config.clone()}>
+                                <LoginView uri={key.clone()} on_access_token_available={ link.callback(Message::AsTokenAvailable) } />
+                            </OAuth2>
+                        </li> }
+                    })}
                 <footer>
                     <p class={ netclass }>{ "Internet connection " }{ if self.browser_is_online { "available, " } else { "unavailable, " }}<label><input type="checkbox" checked={ self.force_offline } onchange={ ctx.link().callback(|_| ToggleForceOffline) } />{ " force offline mode" }</label></p>
                     <p>
@@ -377,6 +389,7 @@ impl Component for Model {
 
 #[derive(PartialEq, Properties)]
 struct LoginViewProps {
+    uri: std::rc::Rc<str>,
     on_access_token_available: Callback<(String, Option<String>)>,
 }
 
@@ -394,10 +407,9 @@ fn login_view(props: &LoginViewProps) -> Html {
     let agent = use_auth_agent().expect("Must be nested inside an OAuth2 component");
     let auth = use_context::<OAuth2Context>().expect("Must be nested inside an OAuth2 context");
 
-    props.on_access_token_available.emit((
-        OAUTH_ENTRY.to_string(),
-        auth.access_token().map(String::from),
-    ));
+    props
+        .on_access_token_available
+        .emit((props.uri.to_string(), auth.access_token().map(String::from)));
 
     // Events prevent default to be usable with <a> links that are still accessible as links
     let login = use_callback(agent.clone(), |event: MouseEvent, agent| {
@@ -414,10 +426,8 @@ fn login_view(props: &LoginViewProps) -> Html {
     });
 
     html!(
-      <ul>
-        <li>{ "At OAuth Authorization Server: "}
+        <>
         // Using Failure/Authenticated/... for simplicity, but we could probably also juste as well work on auth
-        <Failure>{"Login failure: "}<FailureMessage/></Failure>
         <Authenticated>
           {"Logged in as "}
           if let OAuth2Context::Authenticated(Authentication { claims: Some(claims), .. }) = &auth {
@@ -436,14 +446,16 @@ fn login_view(props: &LoginViewProps) -> Html {
           } else {
               { "… well actually not logged in (please report how this happened)" }
           }
-          {"; "}
+          { format!(" at {}; ", props.uri) }
           <a onclick={logout} href="#prevent_me">{ "Logout" }</a>
         </Authenticated>
         <NotAuthenticated>
-          {"Not logged in; "}<a onclick={login} href="#prevent_me">{ "Login" }</a>
+          <a onclick={login} href="#prevent_me">{ "Login" }</a>{ format!(" to {} ", props.uri) }
         </NotAuthenticated>
-        </li>
-      </ul>
+        // Not repeating the URI because this is typically shown when also NotAuthenticated is
+        // shown, and creates an own paragraph.
+        <Failure>{ "Login failure: " }<FailureMessage/></Failure>
+        </>
     )
 }
 
