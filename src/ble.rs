@@ -1088,10 +1088,16 @@ impl BlePoolBackend {
                     }
                 };
 
+                log::info!("Token obtained.");
+                if let Some(dcaf::Scope::AifEncoded(s)) = &token_response.scope {
+                    log::debug!(
+                        "Token indicats permissions on {:?}, but all buttons are left usable to demonstrate that decision is with the server.", s
+                    );
+                }
+
                 self.set_token(rch.clone(), Obtained(token_response));
                 self.notify_device_list(Some(NetworkActivity::Success))
                     .await;
-                log::info!("Token obtained.");
             }
             _ => {
                 log::error!("Token endpoint reported unexpected code");
@@ -1118,7 +1124,6 @@ impl BlePoolBackend {
             return;
         };
         log::info!("Trying to establish a security context.");
-        log::debug!("Token: {token_response:?}");
 
         // FIXME: This could be avoided if we didn't use &mut so often during requesting (but we do
         // need exclusvie access to one of the security contexts).
