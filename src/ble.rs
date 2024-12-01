@@ -38,10 +38,10 @@ pub struct DeviceDetails {
     pub rs_identity: Option<RequestCreationHints>,
     /// Description of the error that led to the absence of a token.
     pub why_no_token: Option<MissingTokenReason>,
-    /// Short form of the access token obtained for that connection, if any
+    /// Clone of the token to be displayed in summary, if any
     ///
     /// Accompanied by the time that token was obtained (on the system's time scale)
-    pub access_token: Option<(String, Timestamp)>,
+    pub access_token: Option<(std::rc::Rc<dcaf::AccessTokenResponse>, Timestamp)>,
     pub oscore_established: bool,
 }
 
@@ -427,13 +427,6 @@ impl BlePoolBackend {
         ids.extend(self.connections.keys());
         ids.extend(self.rs_identities.keys());
 
-        fn present_token(atr: &dcaf::AccessTokenResponse) -> String {
-            format!(
-                "{}",
-                hex::encode(&atr.access_token[atr.access_token.len() - 4..])
-            )
-        }
-
         let mut new_list: Vec<_> = ids
             .iter()
             .map(|id| {
@@ -448,7 +441,10 @@ impl BlePoolBackend {
                     rs_identity: rs_identity.cloned(),
                     why_no_token: token.and_then(|(ts, _)| ts.get_failed()),
                     access_token: token.and_then(|(ts, when)| {
-                        ts.get_obtained().map(|o| (present_token(o), when.clone()))
+                        // FIXME in particular here, rather than cloning, we could make an effort
+                        // to keep the identity the same (the type is an Rc already because that's
+                        // what works well with yew).
+                        ts.get_obtained().map(|o| (o.clone().into(), when.clone()))
                     }),
                     oscore_established: self.security_contexts.contains_key(id),
                 }
@@ -464,7 +460,7 @@ impl BlePoolBackend {
                 rs_identity: Some(rch.clone()),
                 why_no_token: token.and_then(|(ts, _)| ts.get_failed()),
                 access_token: token.and_then(|(ts, when)| {
-                    ts.get_obtained().map(|o| (present_token(o), when.clone()))
+                    ts.get_obtained().map(|o| (o.clone().into(), when.clone()))
                 }),
                 oscore_established: false,
             }

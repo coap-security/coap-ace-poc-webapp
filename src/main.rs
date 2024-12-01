@@ -508,13 +508,13 @@ impl Model {
                     <li>
                         { operative }
                         { sec_assoc }
-                        <p>{ "Token: " }{ if let Some((token, when)) = &con.access_token {
+                        <p>{ "Token: " }{ if let Some((tokres, when)) = &con.access_token {
                             let class = if instant::SystemTime::now().duration_since(*when).unwrap().as_secs() < 10 {
                                 classes!["new"]
                             } else {
                                 classes![]
                             };
-                            html! { <span class={ class }><tt>{ token }</tt></span> }
+                            html! { <span class={ class }><ShowTokenResponse value={tokres} /></span> }
                         } else {
                             match con.why_no_token {
                                 // We've already had the special treatment for Unauthorized above
@@ -650,4 +650,54 @@ pub fn do_oscore_test() -> Result<(), &'static str> {
     drop(primitive);
 
     Ok(())
+}
+
+#[derive(PartialEq, Properties)]
+struct ShowTokenResponseProps {
+    value: std::rc::Rc<dcaf::AccessTokenResponse>,
+}
+
+#[function_component(ShowTokenResponse)]
+fn show_token_response(props: &ShowTokenResponseProps) -> Html {
+    let profile = match props.value.ace_profile {
+        Some(dcaf::AceProfile::CoapOscore) => " for OSCORE profile",
+        Some(dcaf::AceProfile::Other(4)) => " for EDHOC profile",
+        _ => " for unknown profile",
+    };
+    // Plausibility checks done during development which were left in place because they do no harm
+    // in this kind of environment (this is a debug view, after all).
+    let plausibility = match props.value.ace_profile {
+        Some(dcaf::AceProfile::CoapOscore) => {
+            if !matches!(
+                props.value.cnf.as_ref(),
+                Some(dcaf::ProofOfPossessionKey::OscoreInputMaterial(_))
+            ) {
+                " but no OSCORE input material"
+            } else {
+                ""
+            }
+        }
+        Some(dcaf::AceProfile::Other(4)) => {
+            // We might also run on KCCS here, but right now plain COSE keys are around
+            use coset::{iana::KeyType::EC2, CoseKey, RegisteredLabel::Assigned};
+            use dcaf::ProofOfPossessionKey::PlainCoseKey;
+            if !matches!(
+                &props.value.rs_cnf,
+                Some(PlainCoseKey(CoseKey {
+                    kty: Assigned(EC2),
+                    ..
+                }))
+            ) {
+                " but no usable plain key rs_cnf"
+            } else {
+                ""
+            }
+        }
+        _ => "",
+    };
+    html!(<>
+          <tt>{ hex::encode(&props.value.access_token[props.value.access_token.len() - 4..]) }</tt>
+          { profile }
+          { plausibility }
+          </>)
 }
