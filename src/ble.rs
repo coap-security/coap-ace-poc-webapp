@@ -185,6 +185,11 @@ struct BlePoolBackend {
 
     /// Tokens usable for interactions with ASs
     as_tokens: std::collections::HashMap<String, String>,
+
+    /// EDHOC key used with ACE EDHOC profile
+    edhoc_private_d: lakers::BytesP256ElemLen,
+    /// Public part of `edhoc_private_d`
+    edhoc_public_x: lakers::BytesP256ElemLen,
 }
 
 /// A BLE characteristic (from which the device, GATT and other JavaScript components can be
@@ -475,6 +480,11 @@ impl BlePoolBackend {
         front2back: futures::channel::mpsc::Receiver<FrontToBackMessage>,
         back2front: futures::channel::mpsc::Sender<BackToFrontMessage>,
     ) {
+        log::debug!("Creating private key for use from this client instance");
+        use lakers::CryptoTrait;
+        let mut crypto = lakers_crypto_rustcrypto::Crypto::new(rand::thread_rng());
+        let (edhoc_private_d, edhoc_public_x) = crypto.p256_generate_key_pair();
+
         let mut self_ = Self {
             front2back,
             back2front,
@@ -485,6 +495,8 @@ impl BlePoolBackend {
             security_contexts: Default::default(),
             force_offline: false,
             as_tokens: Default::default(),
+            edhoc_private_d,
+            edhoc_public_x,
         };
 
         loop {
@@ -1008,6 +1020,8 @@ impl BlePoolBackend {
         log::info!("Trying to get a token...");
         use web_sys::{Request, RequestCredentials, RequestInit, RequestMode, Response};
 
+        let select_oscore_token = false;
+
         let mut token_request = std::collections::HashMap::new();
         token_request.insert(
             5u8, // audience
@@ -1018,11 +1032,47 @@ impl BlePoolBackend {
         // null here (in 5.8.4.3 and 5.8.1), but is nowhere explicit that setting a concrete
         // profile is fine as well (and dcaf only sends empty values).
         // See <https://github.com/namib-project/dcaf-rs/issues/28>
-        token_request.insert(
-            38u8,                       // ace_profile
-            ciborium::Value::from(2u8), // coap_oscore
-        );
-        // token_request.insert(38u8, ciborium::Value::from(4u8)); // ace_profile: coap_edhoc_oscore
+        if select_oscore_token {
+            token_request.insert(
+                38u8,                       // ace_profile
+                ciborium::Value::from(2u8), // coap_oscore
+            );
+        } else {
+            token_request.insert(38u8, ciborium::Value::from(4u8)); // ace_profile: coap_edhoc_oscore
+            use coset::AsCborValue;
+            token_request.insert(
+                4, // req_cnf
+                ciborium::Value::Map(vec![(
+                    // FIXME: Do we really want to have a COSE_Key right in there, or do we rather
+                    // expect a kccs that contains a cnf that contains a COSE_Key?
+                    ciborium::Value::from(1), // COSE_Key
+                    coset::CoseKey {
+                        kty: coset::KeyType::Assigned(coset::iana::KeyType::EC2.into()),
+                        params: vec![
+                            (
+                                coset::Label::Int(-1),      // crv
+                                ciborium::Value::from(1u8), // P-256
+                            ),
+                            (
+                                coset::Label::Int(-2), // x
+                                ciborium::Value::Bytes(self.edhoc_public_x.into()),
+                            ),
+                            (
+                                // FIXME: The AS expects this to be present, event
+                                // though there is no reason all around to have
+                                // it, so we send dummy values
+                                coset::Label::Int(-3), // y
+                                ciborium::Value::Bytes([0; 32].into()),
+                            ),
+                        ],
+                        ..Default::default()
+                    }
+                    .to_cbor_value()
+                    .unwrap(),
+                )]),
+            );
+        }
+
         let mut request_buffer = Vec::with_capacity(50);
         ciborium::ser::into_writer(&token_request, &mut request_buffer)
             .expect("Map can be encoded");
