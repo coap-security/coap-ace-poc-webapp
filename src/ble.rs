@@ -128,16 +128,18 @@ pub struct NoWebBluetoothSupport;
 
 #[derive(Debug)]
 enum TokenStatus {
-    Obtained(dcaf::AccessTokenResponse),
+    // Most users (notify_device_list and try_establish_security_context) would need to clone this
+    // constantly anyway; Rc'ing it already.
+    Obtained(std::rc::Rc<dcaf::AccessTokenResponse>),
     Failed(MissingTokenReason),
     // Not using a Result because we could have a Pending inbetween as well
 }
 use TokenStatus::*;
 
 impl TokenStatus {
-    fn get_obtained(&self) -> Option<&dcaf::AccessTokenResponse> {
+    fn get_obtained(&self) -> Option<std::rc::Rc<dcaf::AccessTokenResponse>> {
         match self {
-            Obtained(atr) => Some(atr),
+            Obtained(atr) => Some(atr.clone()),
             _ => None,
         }
     }
@@ -445,12 +447,8 @@ impl BlePoolBackend {
                     name: con.and_then(|c| Some(c.name.as_ref()?.clone())),
                     rs_identity: rs_identity.cloned(),
                     why_no_token: token.and_then(|(ts, _)| ts.get_failed()),
-                    access_token: token.and_then(|(ts, when)| {
-                        // FIXME in particular here, rather than cloning, we could make an effort
-                        // to keep the identity the same (the type is an Rc already because that's
-                        // what works well with yew).
-                        ts.get_obtained().map(|o| (o.clone().into(), when.clone()))
-                    }),
+                    access_token: token
+                        .and_then(|(ts, when)| ts.get_obtained().map(|o| (o, when.clone()))),
                     oscore_established: self.security_contexts.contains_key(id),
                 }
             })
@@ -464,9 +462,8 @@ impl BlePoolBackend {
                 name: None,
                 rs_identity: Some(rch.clone()),
                 why_no_token: token.and_then(|(ts, _)| ts.get_failed()),
-                access_token: token.and_then(|(ts, when)| {
-                    ts.get_obtained().map(|o| (o.clone().into(), when.clone()))
-                }),
+                access_token: token
+                    .and_then(|(ts, when)| ts.get_obtained().map(|o| (o, when.clone()))),
                 oscore_established: false,
             }
         }));
@@ -1154,7 +1151,7 @@ impl BlePoolBackend {
                     );
                 }
 
-                self.set_token(rch.clone(), Obtained(token_response));
+                self.set_token(rch.clone(), Obtained(token_response.into()));
                 self.notify_device_list(Some(NetworkActivity::Success))
                     .await;
             }
@@ -1184,8 +1181,6 @@ impl BlePoolBackend {
         };
         log::info!("Trying to establish a security context.");
 
-        // FIXME: This could be avoided if we didn't use &mut so often during requesting (but we do
-        // need exclusvie access to one of the security contexts).
         let token_response = token_response.clone();
         let Some(dcaf::ProofOfPossessionKey::OscoreInputMaterial(material)) =
             &token_response.cnf.as_ref()
