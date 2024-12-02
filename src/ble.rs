@@ -638,6 +638,13 @@ impl BlePoolBackend {
             let response = js_sys::Uint8Array::new(&response.buffer()).to_vec();
 
             if response.len() > 0 {
+                match coap_numbers::code::classify(response[0]) {
+                    coap_numbers::code::Range::Response(_) => (),
+                    class => {
+                        log::debug!("Read non-empty response but code was {:02x} ({:?}), waiting for the actual response", response[0], class);
+                        continue;
+                    }
+                }
                 log::debug!("Read response: {} bytes", response.len());
                 break response;
             }
