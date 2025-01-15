@@ -177,7 +177,10 @@ struct BlePoolBackend {
     /// visualization.
     tokens: std::collections::HashMap<RequestCreationHints, (TokenStatus, Timestamp)>,
     /// Established security contexts
-    security_contexts: std::collections::HashMap<DeviceId, liboscore::PrimitiveContext>,
+    ///
+    /// The bytes stored along with the context is an EDHOC messag 3 that should be sent along
+    /// until confirmation is achieved.
+    security_contexts: std::collections::HashMap<DeviceId, (liboscore::PrimitiveContext, Option<Box<[u8]>>)>,
 
     /// Override from the front-end to not attempt token requests
     ///
@@ -674,7 +677,7 @@ impl BlePoolBackend {
         // sub-optimal, but a) a practical simplification for tossing it around between to
         // closures, and b) kind of a consequence of PrimitiveContext only being usable &mut rather
         // than being usable through the more elaborate means provided by liboscore.
-        let mut ctx = self
+        let (mut ctx, msg3) = self
             .security_contexts
             .remove(id)
             .ok_or("No security context available")?;
@@ -732,7 +735,7 @@ impl BlePoolBackend {
             .await?;
 
         if user_response.is_ok() {
-            self.security_contexts.insert(id.to_string(), ctx);
+            self.security_contexts.insert(id.to_string(), (ctx, None));
         } else {
             // Let's not even put back the security context -- it just failed, so it's probably
             // broken. As we've received a response and it's really just the OSCORE layer that was
@@ -1223,7 +1226,7 @@ impl BlePoolBackend {
                 .unwrap();
 
                 log::info!("Derived OSCORE context now to be used with {id:?}");
-                self.security_contexts.insert(id.to_string(), context);
+                self.security_contexts.insert(id.to_string(), (context, None));
                 self.notify_device_list(None).await;
             }
             Err(e) => {
