@@ -40,8 +40,8 @@ ciborium-io = { version = "0.2", default-features = false }
 # one of the key tools when working with CBOR and serde...
 serde_bytes = "0.11"
 
-liboscore = "0.2.0"
-liboscore-msgbackend = { version = "0.2.0", features = [ "alloc" ] }
+liboscore = "0.2.2"
+liboscore-msgbackend = { version = "0.2.2", features = [ "alloc" ] }
 # only to enable the feature
 # liboscore-cryptobackend = { version = "0.1.0", features = [ "log_cryptographic_operations_including_secret_keys" ] }
 ace-oscore-helpers = { git = "https://gitlab.com/oscore/ace-oscore-helpers/", features = [ "liboscore", "alloc" ], branch = "v02" }
@@ -75,8 +75,3 @@ dcaf = { git = "https://github.com/chrysn-pull-requests/dcaf-rs", branch = "osco
 # see https://github.com/trunk-rs/trunk/issues/904#issuecomment-2468825502 for
 # why we're waiting for 0.2.96; this is coordinated with gitlab-ci.yaml
 wasm-bindgen = { git = "https://github.com/rustwasm/wasm-bindgen", rev = "df9893b" }
-
-# avoiding https://gitlab.com/oscore/liboscore/-/merge_requests/10
-liboscore = { git = "https://gitlab.com/oscore/liboscore.git", rev = "b0158334" }
-liboscore-msgbackend = { git = "https://gitlab.com/oscore/liboscore.git", rev = "b0158334" }
-liboscore-cryptobackend = { git = "https://gitlab.com/oscore/liboscore.git", rev = "b0158334" }
