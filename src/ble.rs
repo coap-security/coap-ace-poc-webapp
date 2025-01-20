@@ -353,11 +353,11 @@ impl BlePoolBackend {
                 .iter()
                 .collect::<js_sys::Array>(),
         );
-        let device = wasm_bindgen_futures::JsFuture::from(bluetooth.request_device(
-            RequestDeviceOptions::new().filters(&[filter].iter().collect::<js_sys::Array>()),
-        ))
-        .await
-        .map_err(|_| "No device actually selected")?;
+        let rdo = RequestDeviceOptions::new();
+        rdo.set_filters(&[filter].iter().collect::<js_sys::Array>());
+        let device = wasm_bindgen_futures::JsFuture::from(bluetooth.request_device(&rdo))
+            .await
+            .map_err(|_| "No device actually selected")?;
 
         let device: web_sys::BluetoothDevice = device.into();
         log::info!("New device: {:?} ({:?})", device.name(), device.id());
@@ -1132,11 +1132,11 @@ impl BlePoolBackend {
         ciborium::ser::into_writer(&token_request, &mut request_buffer)
             .expect("Map can be encoded");
         let body = js_sys::Uint8Array::from(request_buffer.as_slice());
-        let mut opts = RequestInit::new();
-        opts.method("POST")
-            .mode(RequestMode::Cors)
-            .credentials(RequestCredentials::Omit)
-            .body(Some(&body));
+        let opts = RequestInit::new();
+        opts.set_method("POST");
+        opts.set_mode(RequestMode::Cors);
+        opts.set_credentials(RequestCredentials::Omit);
+        opts.set_body(&body);
 
         let Ok(request) = Request::new_with_str_and_init(&rch.as_uri, &opts) else {
             // More like "Browser can't even figure out how server would be reached"
