@@ -20,6 +20,8 @@ use crate::helpers::PromiseExt;
 const UUID_US: &'static str = "8df804b7-3300-496d-9dfa-f8fb40a236bc";
 const UUID_UC: &'static str = "2a58fc3f-3c62-4ecc-8167-d66d4d9410c2";
 
+const BUFLEN: usize = 400;
+
 pub type DeviceId = String;
 type RequestCreationHints =
     ace_oscore_helpers::request_creation_hints::RequestCreationHints<String>;
@@ -602,13 +604,13 @@ impl BlePoolBackend {
         let connection = &self.connections[id];
 
         let mut carry = None;
-        let mut request = coap_gatt_utils::write::<400>(|msg| {
+        let mut request = coap_gatt_utils::write::<{ BUFLEN }>(|msg| {
             carry = Some(write_request(msg));
         });
         // FIXME: Maybe change coap_gatt_utils so this nees less patching?
         let carry = carry.expect("write always invokes the writer");
 
-        log::debug!("Writing request: {} bytes", request.len());
+        log::debug!("Writing request: {} bytes ({:?})", request.len(), request);
 
         let result = connection
             .characteristic
