@@ -1242,6 +1242,29 @@ impl BlePoolBackend {
         log::info!("Trying to establish a security context.");
 
         let token_response = token_response.clone();
+        match token_response.ace_profile {
+            Some(dcaf::AceProfile::CoapOscore) => {
+                self.try_establish_oscore(id, token_response).await;
+            }
+            Some(dcaf::AceProfile::Other(4)) => {
+                match self.try_establish_edhoc(id, token_response).await {
+                    Ok(()) => (),
+                    Err(e) => {
+                        log::error!("Error during EDHOC exchange: {}", e);
+                    }
+                }
+            }
+            _ => {
+                log::error!("Token is not for any known profile.");
+            }
+        }
+    }
+
+    async fn try_establish_oscore(
+        &mut self,
+        id: &str,
+        token_response: std::rc::Rc<dcaf::AccessTokenResponse>,
+    ) {
         let Some(dcaf::ProofOfPossessionKey::OscoreInputMaterial(material)) =
             &token_response.cnf.as_ref()
         else {
@@ -1288,6 +1311,204 @@ impl BlePoolBackend {
                 self.notify_device_list(None).await;
             }
         }
+    }
+
+    async fn try_establish_edhoc(
+        &mut self,
+        id: &str,
+        token_response: std::rc::Rc<dcaf::AccessTokenResponse>,
+    ) -> Result<(), String> {
+        use coap_message::{MinimalWritableMessage, MutableWritableMessage, ReadableMessage};
+        use coap_message_utils::OptionsExt;
+        use lakers::{EDHOCMethod::StatStat, EDHOCSuite::CipherSuite2, EdhocMessageBuffer};
+        use lakers_crypto_rustcrypto::Crypto;
+
+        let rs_cnf = &token_response
+            .rs_cnf
+            .as_ref()
+            .ok_or("Token is missing rs_cnf")?;
+
+        use coset::{iana::KeyType::EC2, CoseKey, RegisteredLabel::Assigned};
+        use dcaf::ProofOfPossessionKey::PlainCoseKey;
+        let PlainCoseKey(CoseKey {
+            kty: Assigned(EC2),
+            params,
+            ..
+        }) = rs_cnf
+        else {
+            return Err(format!(
+                "rs_cnf is not shaped as expected; found {:?}",
+                rs_cnf
+            ));
+        };
+
+        use ciborium::Value::{Bytes, Integer};
+        use coset::Label::Int;
+        let [(Int(-1), Integer(crv)), (Int(-2), Bytes(rs_cnf_x)), (Int(-3), Bytes(rs_cnf_y))] =
+            &params[..]
+        else {
+            return Err(format!(
+                "rs_cnf is not shaped as expected; found params {:?}",
+                params
+            ));
+        };
+
+        if u8::try_from(*crv) != Ok(1) {
+            return Err(format!("rs_cnf is not on expectec urve; found {:?}", crv));
+        }
+
+        let access_token = token_response
+            .access_token
+            .as_slice()
+            .try_into()
+            .map_err(|_| "AS token too large for Lakers")?;
+
+        let c_i = lakers::ConnId::from_slice(&[0]).unwrap();
+        let initiator =
+            lakers::EdhocInitiator::new(Crypto::new(rand::thread_rng()), StatStat, CipherSuite2);
+        let (initiator, m1) = initiator
+            .prepare_message_1(Some(c_i), &None)
+            .map_err(|e| format!("Error preparing message 1: {:?}", e))?;
+
+        let m2 = self
+            .send_request(
+                id,
+                |msg| {
+                    msg.set_code(coap_numbers::code::POST.try_into().unwrap());
+                    msg.add_option(
+                        coap_numbers::option::URI_PATH.try_into().unwrap(),
+                        b".well-known",
+                    )
+                    .unwrap();
+                    msg.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"edhoc")
+                        .unwrap();
+                    let mut payload = msg.payload_mut_with_len(1 + m1.len).unwrap();
+                    payload[0] = 0xf5; // CBOR True
+                    payload[1..].copy_from_slice(m1.as_slice());
+                },
+                |response, _| {
+                    use coap_message_utils::ShowMessageExt;
+                    log::info!("Device responded to EDHOC message 1: {:?}", response.show());
+                    if response.code() != coap_numbers::code::CHANGED {
+                        return Err("Unexpected code");
+                    }
+                    if response.options().ignore_elective_others().is_err() {
+                        return Err("Response has unknown critical options");
+                    }
+
+                    Ok(EdhocMessageBuffer::new_from_slice(response.payload())
+                        .map_err(|_| "M2 exceeds Lakers' buffers")?)
+                },
+            )
+            .await?
+            .map_err(|e| format!("Error processing the response: {}", e))?;
+
+        let (mut initiator, conn_id, id_cred, _ead) = initiator
+            .parse_message_2(&m2)
+            .map_err(|e| format!("Processing M2 failed: {:?}", e))?;
+
+        // We're ignoring the ID_CRED_R: The credential we receive from the AS is a COSE key, which
+        // when converted by prefixing 0xA108A101, has no key ID. (The peer could send the
+        // credential by value, but why should it).
+        let _ = id_cred;
+
+        // This conversion is not exactly the one mentioned in RFC9528 as prefixing with 0xA108A101
+        // -- instead we do more, adding a key ID and an empty scope(?), because Lakers' parser
+        // insists that those be present. (We could sidestep this by avoiding its parser, which we
+        // should probably do on the long run).
+
+        // for peer:
+        let peer_cred = {
+            // FIXME move … somewhere (duplicated w/ firmware)
+            let mut credential = hex_literal::hex!("A2 02 60 08 A1 01 A5 01 02 02 41 63 20 01 21 5820 7878787878787878787878787878787878787878787878787878787878787878 22 5820 7979797979797979797979797979797979797979797979797979797979797979");
+            // FIXME verify length
+            credential[17..17 + 32].copy_from_slice(&rs_cnf_x);
+            credential[52..52 + 32].copy_from_slice(&rs_cnf_y);
+            log::info!(
+                "Reconstructed RS's credential as received from AS as {:02x?}",
+                credential
+            );
+            lakers::Credential::parse_ccs(&credential).unwrap()
+        };
+
+        // for self:
+        let our_cred = {
+            let mut cred = lakers::BufferCred::new();
+            cred.extend_from_slice(&[0xa1, 0x08, 0xa1, 0x01]).unwrap();
+            // The bare minimum; TBD check how we send that (maybe we build the COSEKey somewhere
+            // else already)
+            cred.extend_from_slice(&[0xa4, 0x01, 0x02, 0x20, 0x01, 0x21, 0x58, 0x20])
+                .unwrap();
+            cred.extend_from_slice(&self.edhoc_public_x).unwrap();
+            cred.extend_from_slice(&[0x22, 0x58, 0x20]).unwrap();
+            cred.extend_from_slice(&[0; 32]).unwrap();
+            let mut cred = lakers::Credential::new_ccs(cred, self.edhoc_public_x);
+            // Our credential needs to contain *something* to send by reference, we set an
+            // arbitrary KID (picking the 1-long version that works even before
+            // <https://github.com/openwsn-berkeley/lakers/pull/326>)
+            cred.kid = Some(lakers::EdhocBuffer::from_hex("00"));
+            cred
+        };
+
+        // Not sure why, but Lakers requires set_identity to be called already before
+        // verify_message_2 before creating message 3.
+        initiator
+            .set_identity(self.edhoc_private_d, our_cred)
+            .unwrap();
+
+        let initiator = initiator
+            .verify_message_2(peer_cred)
+            .map_err(|e| format!("Verification of message 2 failed: {:?}", e))?;
+
+        let ead_token = lakers::EADItem {
+            // Beware of https://github.com/openwsn-berkeley/lakers/issues/329
+            label: 20,
+            // We might want to send it as critical, given there's no chance otherwise, but again,
+            // https://github.com/openwsn-berkeley/lakers/issues/329
+            is_critical: false,
+            value: Some(access_token),
+        };
+        let (mut initiator, m3, _prk_out) = initiator
+            .prepare_message_3(lakers::CredentialTransfer::ByReference, &Some(ead_token))
+            .unwrap();
+
+        // FIXME: This is hacked up from coapcore's seccontext, where a similar derivation happens
+        // on the other side.
+        let oscorecontext = {
+            let oscore_secret = initiator.edhoc_exporter(0u8, &[], 16); // label is 0
+            let oscore_salt = initiator.edhoc_exporter(1u8, &[], 8); // label is 1
+            let oscore_secret = &oscore_secret[..16];
+            let oscore_salt = &oscore_salt[..8];
+
+            let sender_id = conn_id.as_slice();
+            let recipient_id = c_i.as_slice();
+
+            // FIXME probe cipher suite
+            let hkdf = liboscore::HkdfAlg::from_number(5).unwrap();
+            let aead = liboscore::AeadAlg::from_number(10).unwrap();
+
+            let immutables = liboscore::PrimitiveImmutables::derive(
+                hkdf,
+                oscore_secret,
+                oscore_salt,
+                None,
+                aead,
+                sender_id,
+                recipient_id,
+            )
+            // FIXME convert error
+            .unwrap();
+
+            liboscore::PrimitiveContext::new_from_fresh_material(immutables)
+        };
+
+        self.security_contexts
+            .insert(id.into(), (oscorecontext, Some(Box::from(m3.as_slice()))));
+        self.notify_device_list(None).await;
+
+        log::info!("Client context is now ready to send a request; message 3 will be sent then. We have verified the peer, but not authenticated to it.");
+
+        Ok(())
     }
 
     fn set_token(&mut self, rch: RequestCreationHints, token: TokenStatus) {
