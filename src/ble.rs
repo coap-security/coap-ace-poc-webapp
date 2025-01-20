@@ -611,7 +611,7 @@ impl BlePoolBackend {
 
         let result = connection
             .characteristic
-            .write_value_with_u8_slice(&mut request)
+            .write_value_without_response_with_u8_slice(&mut request)
             .map_err(|_| "Write failed")?
             .js2rs()
             .await;
