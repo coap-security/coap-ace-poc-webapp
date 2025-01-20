@@ -347,7 +347,7 @@ impl BlePoolBackend {
             BluetoothRemoteGattServer, BluetoothRemoteGattService, RequestDeviceOptions,
         };
 
-        let mut filter = BluetoothLeScanFilterInit::new();
+        let filter = BluetoothLeScanFilterInit::new();
         filter.set_services(
             &[wasm_bindgen::JsValue::from(UUID_US)]
                 .iter()
@@ -1382,7 +1382,7 @@ impl BlePoolBackend {
                     .unwrap();
                     msg.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"edhoc")
                         .unwrap();
-                    let mut payload = msg.payload_mut_with_len(1 + m1.len).unwrap();
+                    let payload = msg.payload_mut_with_len(1 + m1.len).unwrap();
                     payload[0] = 0xf5; // CBOR True
                     payload[1..].copy_from_slice(m1.as_slice());
                 },
