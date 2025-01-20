@@ -182,7 +182,8 @@ struct BlePoolBackend {
     ///
     /// The bytes stored along with the context is an EDHOC messag 3 that should be sent along
     /// until confirmation is achieved.
-    security_contexts: std::collections::HashMap<DeviceId, (liboscore::PrimitiveContext, Option<Box<[u8]>>)>,
+    security_contexts:
+        std::collections::HashMap<DeviceId, (liboscore::PrimitiveContext, Option<Box<[u8]>>)>,
 
     /// Override from the front-end to not attempt token requests
     ///
@@ -1300,7 +1301,8 @@ impl BlePoolBackend {
                 .unwrap();
 
                 log::info!("Derived OSCORE context now to be used with {id:?}");
-                self.security_contexts.insert(id.to_string(), (context, None));
+                self.security_contexts
+                    .insert(id.to_string(), (context, None));
                 self.notify_device_list(None).await;
             }
             Err(e) => {
