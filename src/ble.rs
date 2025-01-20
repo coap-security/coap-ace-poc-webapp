@@ -347,19 +347,15 @@ impl BlePoolBackend {
             BluetoothRemoteGattServer, BluetoothRemoteGattService, RequestDeviceOptions,
         };
 
-        let device = wasm_bindgen_futures::JsFuture::from(
-            bluetooth.request_device(
-                RequestDeviceOptions::new().filters(
-                    &[BluetoothLeScanFilterInit::new().services(
-                        &[wasm_bindgen::JsValue::from(UUID_US)]
-                            .iter()
-                            .collect::<js_sys::Array>(),
-                    )]
-                    .iter()
-                    .collect::<js_sys::Array>(),
-                ),
-            ),
-        )
+        let mut filter = BluetoothLeScanFilterInit::new();
+        filter.set_services(
+            &[wasm_bindgen::JsValue::from(UUID_US)]
+                .iter()
+                .collect::<js_sys::Array>(),
+        );
+        let device = wasm_bindgen_futures::JsFuture::from(bluetooth.request_device(
+            RequestDeviceOptions::new().filters(&[filter].iter().collect::<js_sys::Array>()),
+        ))
         .await
         .map_err(|_| "No device actually selected")?;
 
@@ -615,7 +611,8 @@ impl BlePoolBackend {
 
         let result = connection
             .characteristic
-            .write_value_with_u8_array(&mut request)
+            .write_value_with_u8_slice(&mut request)
+            .map_err(|_| "Write failed")?
             .js2rs()
             .await;
 

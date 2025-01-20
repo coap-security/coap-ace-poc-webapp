@@ -20,11 +20,11 @@ console_error_panic_hook = "^0.1.7"
 log = "^0.4"
 console_log = { version = "^1", features = [ "color" ] }
 fern = "0.7"
-wasm-bindgen = "^0.2.95"
+wasm-bindgen = "^0.2.100"
 wasm-bindgen-futures = "^0.4.45"
 futures = "0.3.25"
 js-sys = "^0.3.60"
-web-sys = { version = "= 0.3.64", features = [ "Navigator" , "Bluetooth", "RequestDeviceOptions", "BluetoothDevice", "BluetoothRemoteGattServer", "BluetoothRemoteGattService", "BluetoothRemoteGattCharacteristic", "BluetoothLeScanFilterInit", "BluetoothCharacteristicProperties"] }
+web-sys = { version = "= 0.3.77", features = [ "Navigator" , "Bluetooth", "RequestDeviceOptions", "BluetoothDevice", "BluetoothRemoteGattServer", "BluetoothRemoteGattService", "BluetoothRemoteGattCharacteristic", "BluetoothLeScanFilterInit", "BluetoothCharacteristicProperties"] }
 instant = { version = "0.1.12", features = [ "wasm-bindgen" ] }
 dcaf = { version = "0.3.1", default-features = false }
 url = "2"
@@ -73,7 +73,3 @@ built = { version = "0.5.2", features = [ "git2" ] }
 [patch.crates-io]
 coset = { git = "https://github.com/chrysn-pull-requests/coset", branch = "oscore" }
 dcaf = { git = "https://github.com/chrysn-pull-requests/dcaf-rs", branch = "oscore" }
-
-# see https://github.com/trunk-rs/trunk/issues/904#issuecomment-2468825502 for
-# why we're waiting for 0.2.96; this is coordinated with gitlab-ci.yaml
-wasm-bindgen = { git = "https://github.com/rustwasm/wasm-bindgen", rev = "df9893b" }
