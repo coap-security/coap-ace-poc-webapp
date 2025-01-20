@@ -1174,7 +1174,8 @@ impl BlePoolBackend {
 
         let resp: Response = resp_value.try_into().unwrap();
         match resp.status() {
-            // FIXME: With OAuth we don't get those
+            // FIXME: With OAuth we get those both when we're not logged in at all and when that
+            // device doesn't exist (or might exist but we may not be authorized to use it)
             401 => {
                 self.set_token(rch.clone(), Failed(MissingTokenReason::Unauthorized));
                 self.notify_device_list(Some(NetworkActivity::Success))
