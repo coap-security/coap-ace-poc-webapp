@@ -59,6 +59,10 @@ hex = "0.4.3"
 yew-oauth2 = { version = "0.11.0", features = ["yew-nested-router", "openid"] }
 openidconnect = "3" # not pub exported but used from yew-oauth2?
 
+lakers = "0.7"
+lakers-shared = { version  = "0.7", features = ["quadruple_sizes"] }
+lakers-crypto-rustcrypto = "0.7"
+
 [build-dependencies]
 # Note that this works best when not doing shallow clones while git2 doesn't
 # support these; best disable shallow clones in CI.
