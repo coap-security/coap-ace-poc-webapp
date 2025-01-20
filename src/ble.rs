@@ -688,10 +688,58 @@ impl BlePoolBackend {
             .send_request(
                 id,
                 |request| {
+                    use coap_message::{
+                        MessageOption, MinimalWritableMessage, MutableWritableMessage,
+                        ReadableMessage,
+                    };
+                    let mut code_buffer = 0;
+                    let mut buffer = [0; BUFLEN - 1];
+                    let mut liboscore_spool =
+                        coap_message_implementations::inmemory_write::GenericMessage::new(
+                            &mut code_buffer,
+                            &mut buffer,
+                        );
+
+                    // Encrypting message into a buffer first, then merging in the EDHOC option --
+                    // libOSCORE can't pass through unencrypted data, see
+                    // <https://gitlab.com/oscore/liboscore/-/merge_requests/15>.
+                    //
+                    // Can certainly be done in a more pretty fashion, but this is due for
+                    // replacement with coapcore, which is better equipped.
+
                     let correlation_usercarry =
-                        liboscore::protect_request(request, &mut ctx, |request| {
+                        liboscore::protect_request(&mut liboscore_spool, &mut ctx, |request| {
                             write_request(request)
                         });
+
+                    // FIXME: Error handling
+                    request.set_code(liboscore_spool.code());
+                    let mut added_edhoc = false;
+                    for o in liboscore_spool.options() {
+                        if o.number() > coap_numbers::option::EDHOC
+                            && msg3.is_some()
+                            && added_edhoc == false
+                        {
+                            request
+                                .add_option(coap_numbers::option::EDHOC, b"")
+                                .unwrap();
+                            added_edhoc = true;
+                        }
+                        request.add_option(o.number(), o.value()).unwrap();
+                    }
+                    if msg3.is_some() && added_edhoc == false {
+                        request
+                            .add_option(coap_numbers::option::EDHOC, b"")
+                            .unwrap();
+                    }
+
+                    let prefix = msg3.as_deref().unwrap_or(&[]);
+                    let mapped = request
+                        .payload_mut_with_len(prefix.len() + liboscore_spool.payload().len())
+                        .unwrap();
+                    mapped[..prefix.len()].copy_from_slice(prefix);
+                    mapped[prefix.len()..].copy_from_slice(liboscore_spool.payload());
+
                     (ctx, correlation_usercarry)
                 },
                 |response, (mut ctx, correlation_usercarry)| {
