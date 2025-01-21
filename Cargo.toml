@@ -24,7 +24,7 @@ wasm-bindgen = "^0.2.100"
 wasm-bindgen-futures = "^0.4.45"
 futures = "0.3.25"
 js-sys = "^0.3.60"
-web-sys = { version = "= 0.3.77", features = [ "Navigator" , "Bluetooth", "RequestDeviceOptions", "BluetoothDevice", "BluetoothRemoteGattServer", "BluetoothRemoteGattService", "BluetoothRemoteGattCharacteristic", "BluetoothLeScanFilterInit", "BluetoothCharacteristicProperties"] }
+web-sys = { version = "= 0.3.77", features = [ "Navigator" , "Bluetooth", "RequestDeviceOptions", "BluetoothDevice", "BluetoothRemoteGattServer", "BluetoothRemoteGattService", "BluetoothRemoteGattCharacteristic", "BluetoothLeScanFilterInit", "BluetoothCharacteristicProperties", "BroadcastChannel"] }
 instant = { version = "0.1.12", features = [ "wasm-bindgen" ] }
 dcaf = { version = "0.3.1", default-features = false }
 url = "2"
@@ -56,7 +56,7 @@ serde_cbor = "*"
 
 hex = "0.4.3"
 # We're using the OpenID aspect only to show whom we're logged in as
-yew-oauth2 = { version = "0.11.0", features = ["yew-nested-router", "openid"] }
+yew-oauth2 = { version = "0.11.0", features = ["openid"] }
 openidconnect = "3" # not pub exported but used from yew-oauth2?
 
 lakers = "0.7"
@@ -64,6 +64,7 @@ lakers-shared = { version  = "0.7", features = ["quadruple_sizes"] }
 lakers-crypto-rustcrypto = "0.7"
 coap-message-utils = "0.3.8"
 hex-literal = "0.4.1"
+uuid = { version = "1.12.1", features = ["v4"], default-features = false }
 
 [build-dependencies]
 # Note that this works best when not doing shallow clones while git2 doesn't
@@ -73,3 +74,5 @@ built = { version = "0.5.2", features = [ "git2" ] }
 [patch.crates-io]
 coset = { git = "https://github.com/chrysn-pull-requests/coset", branch = "oscore" }
 dcaf = { git = "https://github.com/chrysn-pull-requests/dcaf-rs", branch = "oscore" }
+
+yew-oauth2 = { git = "https://github.com/chrysn-pull-requests/yew-oauth2", rev = "c3c784b9de5c2007ad5584280b72c7789f99102b" } # from branch enable-window / https://github.com/ctron/yew-oauth2/pull/45

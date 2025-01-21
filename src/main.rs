@@ -186,10 +186,10 @@ impl Component for Model {
         //
         // This is currently disabled becasue of <https://github.com/ctron/yew-oauth2/issues/43> --
         // having more than one in breaks things occasionally.
-        // oauth_configs.insert(
-        //     "http://localhost:8081/realms/master".into(),
-        //     yew_oauth2::openid::Config::new("example", "http://localhost:8081/realms/master"),
-        // );
+        oauth_configs.insert(
+            "http://localhost:8081/realms/master".into(),
+            yew_oauth2::openid::Config::new("example", "http://localhost:8081/realms/master"),
+        );
         // URIs for keycloak as running the keycloak-ace-extensions/playground with the
         // ace_as container configured with `ports:` / `- "1103:8080"`
         oauth_configs.insert(
@@ -356,10 +356,6 @@ impl Component for Model {
                 </form>
                 </details>
                 <h2>{ "Logins" }</h2>
-                    // We could have multiple of them conceptually, because we send the tokens out
-                    // anyway (from this model's PoV it's inner either way, don't need to go
-                    // top-level in there), but until we dan do OAuth in popups, we can't have
-                    // multiple ASs.
                     { for self.oauth_configs.iter().map(|(key, config)| {
                         html! { <li key={key.clone()}>
                             <OAuth2 config={config.clone()}>
@@ -395,8 +391,8 @@ struct LoginViewProps {
 fn login_view(props: &LoginViewProps) -> Html {
     use yew_oauth2::openid::use_auth_agent;
     use yew_oauth2::prelude::{
-        Authenticated, Authentication, Failure, FailureMessage, NotAuthenticated, OAuth2Context,
-        OAuth2Operations,
+        Authenticated, Authentication, Failure, FailureMessage, LoginOptions, NotAuthenticated,
+        OAuth2Context, OAuth2Operations,
     };
 
     // Reminder to readers unfamiliar with yew's function_component: The macro rewrites every
@@ -409,17 +405,57 @@ fn login_view(props: &LoginViewProps) -> Html {
         .on_access_token_available
         .emit((props.uri.to_string(), auth.access_token().map(String::from)));
 
+    // We could also use props.url here, but that'd need escaping. We could also use a global
+    // counter, but I don't want to explain in a comment why using a global is OK here.
+    let redirector = format!(
+        "./broadcast-and-close.html?yew-oauth-instance={}",
+        uuid::Uuid::new_v4()
+    );
+    let redirect_url =
+        openidconnect::url::Url::parse(&web_sys::window().unwrap().location().href().unwrap())
+            .unwrap()
+            .join(&redirector)
+            .unwrap();
+    let redirect_url_to_compare_to = redirect_url.to_string();
+
     // Events prevent default to be usable with <a> links that are still accessible as links
-    let login = use_callback(agent.clone(), |event: MouseEvent, agent| {
+    let login = use_callback(agent.clone(), move |event: MouseEvent, agent| {
         event.prevent_default();
-        if let Err(e) = agent.start_login() {
+        let lio = LoginOptions::default()
+            .with_redirect_url(redirect_url.clone())
+            .with_new_window();
+        if let Err(e) = agent.start_login_opts(lio) {
             log::error!("Error logging in: {e:?}");
         }
     });
-    let logout = use_callback(agent, |event: MouseEvent, agent| {
+    // FIXME: This logs one out of *all* services, at least from this page's point of view (still,
+    // only the selected site gets fully logged out also there)
+    let logout = use_callback(agent.clone(), |event: MouseEvent, agent| {
         event.prevent_default();
         if let Err(e) = agent.logout() {
             log::error!("Error logging out: {e:?}");
+        }
+    });
+
+    let channel = web_sys::BroadcastChannel::new("oauth_response_query").unwrap();
+    let subscription = gloo_events::EventListener::new(&channel, "message", move |m| {
+        let m = web_sys::MessageEvent::from(wasm_bindgen::JsValue::from(m));
+        let data = m.data().as_string().unwrap();
+        // Filtering here ensures that login errors don't log us out of unrelated servers; there is
+        // the issuer URI somewhere in the query and in the client structs, but they are not
+        // filtered later <https://github.com/ctron/yew-oauth2/issues/43>.
+        if data.starts_with(&redirect_url_to_compare_to) {
+            agent.feed_full_redirected(&data);
+        }
+    });
+
+    // This uses the "Only on destructing or last render" pattern
+    // <https://api.yew.rs/next/yew/functional/fn.use_effect_with.html#on-destructing-or-last-render>
+    // to keep the listener alive -- the callback doesn't need to change if any properties changed,
+    // what matters is that all firing events are sent to this (and any other) instance.
+    use_effect_with((), |_| {
+        move || {
+            drop(subscription);
         }
     });
 
