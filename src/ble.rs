@@ -600,7 +600,30 @@ impl BlePoolBackend {
                 }
                 Some(AsTokenAvailable((endpoint, token))) => {
                     if let Some(token) = token {
-                        self_.as_tokens.insert(endpoint, token);
+                        self_.as_tokens.insert(endpoint.clone(), token);
+
+                        // If there are any devices that are waiting for a token, we don't have
+                        // enough context to continue what they were last doing (also that would be
+                        // excessive), but we can get tokens.
+                        //
+                        // We have to clone in here because try_get_token needs mut self, and
+                        // there's no easy way to promise to the compiler that we don't alter the
+                        // items of rs_identities.
+                        //
+                        // (This could be made more efficient, but at the cost of readability.)
+                        let rs_identities_cloned: Vec<_> = self_
+                            .rs_identities
+                            .values()
+                            .chain(self_.preseeded_rch.iter())
+                            .cloned()
+                            .collect();
+                        for rsi in rs_identities_cloned.into_iter() {
+                            if crate::ace_as_to_oauth_entry(&rsi.as_uri)
+                                .is_some_and(|u| u == &endpoint)
+                            {
+                                self_.try_get_token(&rsi, true).await;
+                            }
+                        }
                     } else {
                         self_.as_tokens.remove(&endpoint);
                     }
