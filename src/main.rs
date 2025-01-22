@@ -60,6 +60,11 @@ pub(crate) fn ace_as_to_oauth_entry(ace_as: &str) -> Option<&str> {
 
 const DEMO_AS: &str = "http://localhost:1103/realms/edf/ace-oauth/token";
 
+struct ManualDevice {
+    as_uri: std::rc::Rc<str>,
+    audience: std::rc::Rc<str>,
+}
+
 /// Main application component
 ///
 /// This renders to the full application view, and hooks up its UI and network elements to receive
@@ -69,8 +74,7 @@ struct Model {
 
     // FIXME: The verbosity around these is sad (this is really a simple form), hints appreciated
     // as to how to simplify them.
-    manual_device_as_uri: String,
-    manual_device_audience: String,
+    manual_device: ManualDevice,
 
     /// Configs, and how often that config has been requested for highlighting.
     oauth_configs:
@@ -210,8 +214,10 @@ impl Component for Model {
 
         Model {
             blepool,
-            manual_device_as_uri: DEMO_AS.to_string(),
-            manual_device_audience: "d01".to_string(),
+            manual_device: ManualDevice {
+                as_uri: DEMO_AS.into(),
+                audience: "d01".into(),
+            },
             force_offline: false,
             browser_is_online: web_sys::window().unwrap().navigator().on_line(),
             oauth_configs,
@@ -295,11 +301,11 @@ impl Component for Model {
             }
 
             SetManualDeviceAsUri(s) => {
-                self.manual_device_as_uri = s;
+                self.manual_device.as_uri = s.into();
                 false
             }
             SetManualDeviceAudience(s) => {
-                self.manual_device_audience = s;
+                self.manual_device.audience = s.into();
                 false
             }
             ManualDeviceRequest => {
@@ -308,8 +314,8 @@ impl Component for Model {
                     // given how large a threshold there is to cross between the async and the yew
                     // world, it's the easiest way.
                     let rch = ace_oscore_helpers::request_creation_hints::RequestCreationHints {
-                        as_uri: self.manual_device_as_uri.clone(),
-                        audience: self.manual_device_audience.clone(),
+                        as_uri: self.manual_device.as_uri.to_string(),
+                        audience: self.manual_device.audience.to_string(),
                     };
                     pool.add_device_manually(rch);
                 }
@@ -384,11 +390,11 @@ impl Component for Model {
                     <fieldset>
                     <p>
                         <label for="input_as_uri">{ "AS URI:" }</label>{ " " }
-                        <input type="url" id="input_as_uri" value={ self.manual_device_as_uri.clone() } onchange={ link.callback(|e: Event| SetManualDeviceAsUri(e.target_unchecked_into::<web_sys::HtmlInputElement>().value())) } />
+                        <input type="url" id="input_as_uri" value={ self.manual_device.as_uri.clone() } onchange={ link.callback(|e: Event| SetManualDeviceAsUri(e.target_unchecked_into::<web_sys::HtmlInputElement>().value())) } />
                     </p>
                     <p>
                         <label for="input_audience">{ "Audience:" }</label>{ " " }
-                        <input type="text" id="input_audience" value={ self.manual_device_audience.clone() } onchange={ link.callback(|e: Event| SetManualDeviceAudience(e.target_unchecked_into::<web_sys::HtmlInputElement>().value())) } />
+                        <input type="text" id="input_audience" value={ self.manual_device.audience.clone() } onchange={ link.callback(|e: Event| SetManualDeviceAudience(e.target_unchecked_into::<web_sys::HtmlInputElement>().value())) } />
                     </p>
                     </fieldset>
                     <p><input type="submit" value="Request token manually" /></p>
