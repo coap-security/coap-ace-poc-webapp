@@ -70,7 +70,9 @@ pub enum FrontToBackMessage {
 
     /// Add a device based on request creation hints. Also removes security associations, if the
     /// device is already known.
-    AddDeviceManually(RequestCreationHints),
+    ///
+    /// The second argument selects whether an EDHOC token should be requested.
+    AddDeviceManually(RequestCreationHints, bool),
 
     /// Remove a BLE device (but not any credentials associated with it) from the list, and
     /// ask the browser to disconnect it.
@@ -282,8 +284,8 @@ impl BlePool {
         self.request(Disconnect(device));
     }
 
-    pub fn add_device_manually(&mut self, rch: RequestCreationHints) {
-        self.request(AddDeviceManually(rch));
+    pub fn add_device_manually(&mut self, rch: RequestCreationHints, request_edhoc: bool) {
+        self.request(AddDeviceManually(rch, request_edhoc));
     }
 
     pub fn latest_temperature(&self, device: &str) -> Option<f32> {
@@ -535,7 +537,8 @@ impl BlePoolBackend {
 
                             let rch = self_.try_get_rch(&id).await;
                             match rch {
-                                Ok(rch) => self_.try_get_token(&rch).await,
+                                // Devices don't advertise it, but we use EDHOC by default
+                                Ok(rch) => self_.try_get_token(&rch, true).await,
                                 Err(e) => {
                                     log::error!("Failed to obtain request creation hints: {e}");
                                     continue;
@@ -566,7 +569,7 @@ impl BlePoolBackend {
                         log::error!("Failed to identify device: {e}");
                     }
                 }
-                Some(AddDeviceManually(rch)) => {
+                Some(AddDeviceManually(rch, request_edhoc)) => {
                     if let Some(id) = self_
                         .rs_identities
                         .iter()
@@ -582,7 +585,7 @@ impl BlePoolBackend {
                     };
                     let _ = self_.tokens.remove(&rch);
                     self_.notify_device_list(None).await;
-                    self_.try_get_token(&rch).await;
+                    self_.try_get_token(&rch, request_edhoc).await;
                 }
                 Some(Disconnect(id)) => {
                     if let Some(con) = self_.connections.remove(&id) {
@@ -687,7 +690,7 @@ impl BlePoolBackend {
     ) -> Result<R, &'static str> {
         let rch = self.try_get_rch(id).await;
         if let Ok(rch) = rch {
-            self.try_get_token(&rch).await;
+            self.try_get_token(&rch, true).await;
         };
         self.try_establish_security_context(id).await;
 
@@ -1072,7 +1075,7 @@ impl BlePoolBackend {
     /// Try to fetch a token from the AS for the audience the RS claimed to be
     ///
     /// Currently fails silently if there is no rs_identities entry.
-    async fn try_get_token(&mut self, rch: &RequestCreationHints) {
+    async fn try_get_token(&mut self, rch: &RequestCreationHints, request_edhoc: bool) {
         if self
             .tokens
             .get(rch)
@@ -1093,8 +1096,6 @@ impl BlePoolBackend {
         log::info!("Trying to get a token...");
         use web_sys::{Request, RequestCredentials, RequestInit, RequestMode, Response};
 
-        let select_oscore_token = false;
-
         let mut token_request = std::collections::HashMap::new();
         token_request.insert(
             5u8, // audience
@@ -1105,7 +1106,7 @@ impl BlePoolBackend {
         // null here (in 5.8.4.3 and 5.8.1), but is nowhere explicit that setting a concrete
         // profile is fine as well (and dcaf only sends empty values).
         // See <https://github.com/namib-project/dcaf-rs/issues/28>
-        if select_oscore_token {
+        if !request_edhoc {
             token_request.insert(
                 38u8,                       // ace_profile
                 ciborium::Value::from(2u8), // coap_oscore

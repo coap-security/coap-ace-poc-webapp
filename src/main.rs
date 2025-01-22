@@ -63,6 +63,7 @@ const DEMO_AS: &str = "http://localhost:1103/realms/edf/ace-oauth/token";
 struct ManualDevice {
     as_uri: std::rc::Rc<str>,
     audience: std::rc::Rc<str>,
+    request_edhoc: bool,
 }
 
 /// Main application component
@@ -114,6 +115,7 @@ enum Message {
 
     SetManualDeviceAsUri(String),
     SetManualDeviceAudience(String),
+    SetManualDeviceEdhoc(bool),
     /// Add a device to the BLE list even though it was not discovered there yet, based on the AS
     /// URI and audience values manually entered using the [SetManualDeviceAsUri] and
     /// [SetManualDeviceAudience] events. This also removes any tokens or security associations for
@@ -216,7 +218,8 @@ impl Component for Model {
             blepool,
             manual_device: ManualDevice {
                 as_uri: DEMO_AS.into(),
-                audience: "d01".into(),
+                audience: "d00".into(),
+                request_edhoc: true,
             },
             force_offline: false,
             browser_is_online: web_sys::window().unwrap().navigator().on_line(),
@@ -308,6 +311,10 @@ impl Component for Model {
                 self.manual_device.audience = s.into();
                 false
             }
+            SetManualDeviceEdhoc(r) => {
+                self.manual_device.request_edhoc = r;
+                false
+            }
             ManualDeviceRequest => {
                 if let Some(pool) = self.blepool.as_mut() {
                     // FIXME: Here it becomes weird that so much is running through the BLE pool -- but
@@ -317,7 +324,7 @@ impl Component for Model {
                         as_uri: self.manual_device.as_uri.to_string(),
                         audience: self.manual_device.audience.to_string(),
                     };
-                    pool.add_device_manually(rch);
+                    pool.add_device_manually(rch, self.manual_device.request_edhoc);
                 }
                 false
             }
@@ -395,6 +402,10 @@ impl Component for Model {
                     <p>
                         <label for="input_audience">{ "Audience:" }</label>{ " " }
                         <input type="text" id="input_audience" value={ self.manual_device.audience.clone() } onchange={ link.callback(|e: Event| SetManualDeviceAudience(e.target_unchecked_into::<web_sys::HtmlInputElement>().value())) } />
+                    </p>
+                    <p>
+                        <label for="input_edhoc">{ "EDHOC:" }</label>{ " " }
+                        <input type="checkbox" id="input_edhoc" checked={ self.manual_device.request_edhoc } onchange={ link.callback(|e: Event| SetManualDeviceEdhoc(e.target_unchecked_into::<web_sys::HtmlInputElement>().checked())) } />
                     </p>
                     </fieldset>
                     <p><input type="submit" value="Request token manually" /></p>
