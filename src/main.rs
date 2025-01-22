@@ -186,33 +186,30 @@ impl Component for Model {
             },
         )));
 
-        let mut oauth_configs = std::collections::HashMap::default();
+        let oauth_configs = std::collections::HashMap::default();
         // URIs for keycloak as running with yew-oauth2's docker compose setup
         //
         // In case of trouble with logging in in the first place, this is a good fallback to
         // explore; won't get far beyond login because it's not an ACE AS.
-        //
-        // This is currently disabled becasue of <https://github.com/ctron/yew-oauth2/issues/43> --
-        // having more than one in breaks things occasionally.
-        oauth_configs.insert(
-            "http://localhost:8081/realms/master".into(),
-            (
-                None,
-                yew_oauth2::openid::Config::new("example", "http://localhost:8081/realms/master"),
-            ),
-        );
+        // oauth_configs.insert(
+        //     "http://localhost:8081/realms/master".into(),
+        //     (
+        //         None,
+        //         yew_oauth2::openid::Config::new("example", "http://localhost:8081/realms/master"),
+        //     ),
+        // );
         // URIs for keycloak as running the keycloak-ace-extensions/playground with the
         // ace_as container configured with `ports:` / `- "1103:8080"`
-        oauth_configs.insert(
-            ace_as_to_oauth_entry(DEMO_AS).unwrap().into(),
-            (
-                None,
-                yew_oauth2::openid::Config::new(
-                    "webapp-dev",
-                    ace_as_to_oauth_entry(DEMO_AS).unwrap(),
-                ),
-            ),
-        );
+        // oauth_configs.insert(
+        //     ace_as_to_oauth_entry(DEMO_AS).unwrap().into(),
+        //     (
+        //         None,
+        //         yew_oauth2::openid::Config::new(
+        //             "webapp-dev",
+        //             ace_as_to_oauth_entry(DEMO_AS).unwrap(),
+        //         ),
+        //     ),
+        // );
 
         Model {
             blepool,
@@ -412,6 +409,9 @@ impl Component for Model {
                 </form>
                 </details>
                 <h2>{ "Logins" }</h2>
+                    if self.oauth_configs.is_empty() {
+                        <p><i> { "No logins configured; discover a device or request a token manually to add the relevant services." } </i></p>
+                    }
                     { for self.oauth_configs.iter().map(|(key, (count, config))| {
                         html! { <li key={key.clone()} class={ if let Some(count) = count { format!("mod2-{} flash-yellow", count % 2) } else { String::new() } }>
                             <OAuth2 config={config.clone()}>
