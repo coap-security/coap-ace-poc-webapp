@@ -94,8 +94,21 @@ pub enum BackToFrontMessage {
     UpdateDeviceList((Vec<DeviceDetails>, Option<NetworkActivity>)),
     /// A temperature reading was obtained from a device
     ReceivedTemperature(DeviceId, Option<f32>),
+    /// Event to be processed not by the front end but by the application running it.
+    NotifyOutside(Notification),
 }
 use BackToFrontMessage::*;
+
+/// Subset of BackToFrontMessage that are exposed to the outside of the [`BlePool`]
+#[derive(Debug)]
+pub enum Notification {
+    /// An operation can non continue because of a missing OAuth AS key.
+    ///
+    /// I.e., "please send an [`FrontToBackMessage::AsTokenAvailable`] with this key"
+    // FIXME: The guidance should probably be to call some method that then does send the
+    // front-to-back message, because .request() should not be pub.
+    MissingAsToken(String),
+}
 
 /// Visualization hints for network activity, emitted along the device list
 #[derive(Debug)]
@@ -295,8 +308,11 @@ impl BlePool {
     /// Change entry point for the backend.
     ///
     /// The user (usually a yew component) needs to send any messages emitted by the receiver
-    /// created in `new()` into this function.
-    pub fn notify(&mut self, message: BackToFrontMessage) {
+    /// created in `new()` into this function, and should act on any returned notification (which
+    /// is the subset of what is passed on that actually the owner of the [`BlePool`] component
+    /// needs to act on).
+    #[must_use]
+    pub fn notify(&mut self, message: BackToFrontMessage) -> Option<Notification> {
         match message {
             UpdateDeviceList((mut list, network_activity)) => {
                 fn key(i: &DeviceDetails) -> (Option<&String>, Option<&String>) {
@@ -326,7 +342,9 @@ impl BlePool {
             ReceivedTemperature(id, None) => {
                 self.most_recent_temperatures.remove(&id);
             }
+            NotifyOutside(n) => return Some(n),
         }
+        None
     }
 
     pub fn set_force_offline(&mut self, force_offline: bool) {
@@ -1152,6 +1170,13 @@ impl BlePoolBackend {
                     .headers()
                     .set("Authorization", &format!("Bearer {}", suitable_token))
                     .unwrap();
+            } else {
+                // We may keep trying, but realistically things fail here; already requesting the
+                // new token.
+                self.notify(BackToFrontMessage::NotifyOutside(
+                    Notification::MissingAsToken(rch.as_uri.clone()),
+                ))
+                .await;
             };
         }
 

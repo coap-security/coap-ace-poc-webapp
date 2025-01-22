@@ -72,7 +72,9 @@ struct Model {
     manual_device_as_uri: String,
     manual_device_audience: String,
 
-    oauth_configs: std::collections::HashMap<std::rc::Rc<str>, yew_oauth2::openid::Config>,
+    /// Configs, and how often that config has been requested for highlighting.
+    oauth_configs:
+        std::collections::HashMap<std::rc::Rc<str>, (Option<u8>, yew_oauth2::openid::Config)>,
 
     /// Shall we pretend the browser was offline?
     force_offline: bool,
@@ -188,13 +190,22 @@ impl Component for Model {
         // having more than one in breaks things occasionally.
         oauth_configs.insert(
             "http://localhost:8081/realms/master".into(),
-            yew_oauth2::openid::Config::new("example", "http://localhost:8081/realms/master"),
+            (
+                None,
+                yew_oauth2::openid::Config::new("example", "http://localhost:8081/realms/master"),
+            ),
         );
         // URIs for keycloak as running the keycloak-ace-extensions/playground with the
         // ace_as container configured with `ports:` / `- "1103:8080"`
         oauth_configs.insert(
             ace_as_to_oauth_entry(DEMO_AS).unwrap().into(),
-            yew_oauth2::openid::Config::new("webapp-dev", ace_as_to_oauth_entry(DEMO_AS).unwrap()),
+            (
+                None,
+                yew_oauth2::openid::Config::new(
+                    "webapp-dev",
+                    ace_as_to_oauth_entry(DEMO_AS).unwrap(),
+                ),
+            ),
         );
 
         Model {
@@ -215,10 +226,38 @@ impl Component for Model {
             }
 
             SomethingBleChanged(queue, message) => {
-                self.blepool
+                let actionable = self
+                    .blepool
                     .as_mut()
                     .expect("Queue was created, so the pool should be here as well")
                     .notify(message);
+                if let Some(actionable) = actionable {
+                    match actionable {
+                        ble::Notification::MissingAsToken(as_uri) => {
+                            if let Some(oauth_uri) = ace_as_to_oauth_entry(&as_uri) {
+                                let oauth_uri: std::rc::Rc<str> = oauth_uri.into();
+                                if let Some(config) = self.oauth_configs.get_mut(&oauth_uri) {
+                                    config.0 = Some(config.0.unwrap_or_default().wrapping_add(1));
+                                } else {
+                                    self.oauth_configs.insert(
+                                        oauth_uri.clone(),
+                                        (
+                                            Some(0),
+                                            yew_oauth2::openid::Config::new(
+                                                "webapp-dev",
+                                                String::from(oauth_uri.as_ref()),
+                                            ),
+                                        ),
+                                    );
+                                }
+                            } else {
+                                log::error!(
+                                    "AS {as_uri} was requsted but can't be turned into OAuth URI"
+                                );
+                            }
+                        }
+                    }
+                }
                 Self::link_ble_queue(ctx, queue);
                 true
             }
@@ -356,8 +395,8 @@ impl Component for Model {
                 </form>
                 </details>
                 <h2>{ "Logins" }</h2>
-                    { for self.oauth_configs.iter().map(|(key, config)| {
-                        html! { <li key={key.clone()}>
+                    { for self.oauth_configs.iter().map(|(key, (count, config))| {
+                        html! { <li key={key.clone()} class={ if let Some(count) = count { format!("mod2-{} flash-yellow", count % 2) } else { String::new() } }>
                             <OAuth2 config={config.clone()}>
                                 <LoginView uri={key.clone()} on_access_token_available={ link.callback(Message::AsTokenAvailable) } />
                             </OAuth2>
@@ -555,11 +594,10 @@ impl Model {
                             match con.why_no_token {
                                 // We've already had the special treatment for Unauthorized above
                                 Some(ble::MissingTokenReason::Unauthorized) => {
-                                    if let Some(rs_identity) = &con.rs_identity {
-                                        // FIXME: Populate into known-AS list, possibly with
-                                        // pre-processing (ACE token endpoint -> OpenID path), or
-                                        // can we even have a login button directly here?
-                                        html! { <b>{ format!("Login required through {:?}", rs_identity) }</b> }
+                                    if con.rs_identity.is_some() {
+                                        // Not showing where: Security association is shown above
+                                        // anyway
+                                        html! { <b>{ "Login required" }</b> }
                                     } else {
                                         "none available (AS not yet known)".into()
                                     }
