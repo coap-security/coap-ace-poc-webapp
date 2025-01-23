@@ -179,6 +179,8 @@ struct BlePoolBackend {
     connections: std::collections::HashMap<DeviceId, BleConnection>,
     /// Most recent request creation hint obtained from the device with the given ID
     rs_identities: std::collections::HashMap<DeviceId, RequestCreationHints>,
+    /// Preference for whether or not for a device should request an EDHOC token.
+    want_edhoc: std::collections::HashMap<RequestCreationHints, bool>,
     /// RCHs that were not found in any concrete BLE device, but are known from other sources
     /// (add_device_manually).
     ///
@@ -509,6 +511,7 @@ impl BlePoolBackend {
             back2front,
             connections: Default::default(),
             rs_identities: Default::default(),
+            want_edhoc: Default::default(),
             preseeded_rch: Default::default(),
             tokens: Default::default(),
             security_contexts: Default::default(),
@@ -538,7 +541,7 @@ impl BlePoolBackend {
                             let rch = self_.try_get_rch(&id).await;
                             match rch {
                                 // Devices don't advertise it, but we use EDHOC by default
-                                Ok(rch) => self_.try_get_token(&rch, true).await,
+                                Ok(rch) => self_.try_get_token(&rch).await,
                                 Err(e) => {
                                     log::error!("Failed to obtain request creation hints: {e}");
                                     continue;
@@ -585,7 +588,8 @@ impl BlePoolBackend {
                     };
                     let _ = self_.tokens.remove(&rch);
                     self_.notify_device_list(None).await;
-                    self_.try_get_token(&rch, request_edhoc).await;
+                    self_.want_edhoc.insert(rch.clone(), request_edhoc);
+                    self_.try_get_token(&rch).await;
                 }
                 Some(Disconnect(id)) => {
                     if let Some(con) = self_.connections.remove(&id) {
@@ -621,7 +625,7 @@ impl BlePoolBackend {
                             if crate::ace_as_to_oauth_entry(&rsi.as_uri)
                                 .is_some_and(|u| u == &endpoint)
                             {
-                                self_.try_get_token(&rsi, true).await;
+                                self_.try_get_token(&rsi).await;
                             }
                         }
                     } else {
@@ -713,7 +717,7 @@ impl BlePoolBackend {
     ) -> Result<R, &'static str> {
         let rch = self.try_get_rch(id).await;
         if let Ok(rch) = rch {
-            self.try_get_token(&rch, true).await;
+            self.try_get_token(&rch).await;
         };
         self.try_establish_security_context(id).await;
 
@@ -1098,7 +1102,7 @@ impl BlePoolBackend {
     /// Try to fetch a token from the AS for the audience the RS claimed to be
     ///
     /// Currently fails silently if there is no rs_identities entry.
-    async fn try_get_token(&mut self, rch: &RequestCreationHints, request_edhoc: bool) {
+    async fn try_get_token(&mut self, rch: &RequestCreationHints) {
         if self
             .tokens
             .get(rch)
@@ -1116,7 +1120,9 @@ impl BlePoolBackend {
             return;
         }
 
-        log::info!("Trying to get a token...");
+        let request_edhoc = self.want_edhoc.get(rch).unwrap_or(&true);
+
+        log::info!("Trying to get a token... (for EDHOC? {request_edhoc})");
         use web_sys::{Request, RequestCredentials, RequestInit, RequestMode, Response};
 
         let mut token_request = std::collections::HashMap::new();
