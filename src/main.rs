@@ -440,6 +440,7 @@ impl Component for Model {
 #[derive(PartialEq, Properties)]
 struct LoginViewProps {
     uri: std::rc::Rc<str>,
+    /// Callback when for the URI (`.0`) a token is available (`.1`).
     on_access_token_available: Callback<(String, Option<String>)>,
 }
 
@@ -457,9 +458,14 @@ fn login_view(props: &LoginViewProps) -> Html {
     let agent = use_auth_agent().expect("Must be nested inside an OAuth2 component");
     let auth = use_context::<OAuth2Context>().expect("Must be nested inside an OAuth2 context");
 
-    props
-        .on_access_token_available
-        .emit((props.uri.to_string(), auth.access_token().map(String::from)));
+    let last_emitted = use_mut_ref(|| None);
+    let access_token = auth.access_token().map(String::from);
+    if access_token != *last_emitted.borrow() {
+        props
+            .on_access_token_available
+            .emit((props.uri.to_string(), access_token.clone()));
+        *last_emitted.borrow_mut() = access_token;
+    };
 
     // We could also use props.url here, but that'd need escaping. We could also use a global
     // counter, but I don't want to explain in a comment why using a global is OK here.

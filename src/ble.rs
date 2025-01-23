@@ -628,6 +628,10 @@ impl BlePoolBackend {
                                 self_.try_get_token(&rsi).await;
                             }
                         }
+                        // FIXME: That we can't tell whether or not activity was here indicates
+                        // that we should do this better somewhere else. (Maybe notify of the list
+                        // here but of the network activity independently).
+                        self_.notify_device_list(None).await;
                     } else {
                         self_.as_tokens.remove(&endpoint);
                     }
