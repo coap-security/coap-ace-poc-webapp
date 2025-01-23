@@ -801,6 +801,12 @@ struct ShowTokenResponseProps {
 
 #[function_component(ShowTokenResponse)]
 fn show_token_response(props: &ShowTokenResponseProps) -> Html {
+    let style = match props.value.access_token.get(0) {
+        Some(0xd0) => "encrypted", // tag 16
+        Some(0xd2) => "signed",    // tag 18
+        Some(_) => "unknown",
+        None => "empty",
+    };
     let profile = match props.value.ace_profile {
         Some(dcaf::AceProfile::CoapOscore) => " for OSCORE profile",
         Some(dcaf::AceProfile::Other(4)) => " for EDHOC profile",
@@ -838,8 +844,11 @@ fn show_token_response(props: &ShowTokenResponseProps) -> Html {
         _ => "",
     };
     html!(<>
-          <tt>{ hex::encode(&props.value.access_token[props.value.access_token.len() - 4..]) }</tt>
+          { style }
           { profile }
           { plausibility }
+          { " (" }
+          <tt>{ hex::encode(&props.value.access_token[props.value.access_token.len() - 4..]) }</tt>
+          { ")" }
           </>)
 }
