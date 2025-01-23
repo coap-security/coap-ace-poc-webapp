@@ -341,8 +341,53 @@ impl Component for Model {
             AsTokenAvailable(details) => {
                 // FIXME should we spool those in case?
                 if let Some(pool) = self.blepool.as_mut() {
-                    pool.request(ble::FrontToBackMessage::AsTokenAvailable(details));
+                    pool.request(ble::FrontToBackMessage::AsTokenAvailable(details.clone()));
                 }
+
+                // This is just a tool helpful while frequently restarting the keycloak playground
+                wasm_bindgen_futures::spawn_local((|| async move {
+                    if let Err(e) = (async {
+                        let (oauth_uri, token) = details;
+                        let token = token.ok_or("Got None token")?;
+                        use crate::helpers::PromiseExt;
+                        use web_sys::{
+                            Request, RequestCredentials, RequestInit, RequestMode, Response,
+                        };
+                        let opts = RequestInit::new();
+                        opts.set_method("GET");
+                        opts.set_mode(RequestMode::Cors);
+                        opts.set_credentials(RequestCredentials::Omit);
+                        let request = Request::new_with_str_and_init(
+                            &format!("{}/ace-oauth/server-public-keys", oauth_uri),
+                            &opts,
+                        )?;
+                        request
+                            .headers()
+                            .set("Authorization", &format!("Bearer {}", token))?;
+
+                        let window = web_sys::window().expect("Running in a browser");
+                        let fetch_result = window.fetch_with_request(&request).js2rs().await?;
+                        let response = Response::try_from(fetch_result).unwrap();
+                        let body = response.array_buffer()?.js2rs().await?;
+                        let body = js_sys::Uint8Array::new(&body).to_vec();
+                        let body = cbor_edn::StandaloneItem::from_cbor(&body)
+                            .map_err(|e| format!("Response is not CBOR: {e}"))?;
+                        log::info!(
+                            "Server {} signing key for tokens is\n{}",
+                            oauth_uri,
+                            body.serialize()
+                        );
+                        Ok::<_, wasm_bindgen::JsValue>(())
+                    })
+                    .await
+                    {
+                        log::error!(
+                            "Got new token but could not check server signing key: {:?}",
+                            e
+                        );
+                    }
+                })());
+
                 false
             }
 

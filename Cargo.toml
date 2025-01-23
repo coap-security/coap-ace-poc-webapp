@@ -65,6 +65,7 @@ lakers-crypto-rustcrypto = "0.7"
 coap-message-utils = "0.3.8"
 hex-literal = "0.4.1"
 uuid = { version = "1.12.1", features = ["v4"], default-features = false }
+cbor-edn = { version = "0.0.8", default-features = false }
 
 [build-dependencies]
 # Note that this works best when not doing shallow clones while git2 doesn't
