@@ -205,7 +205,7 @@ impl Component for Model {
         //     (
         //         None,
         //         yew_oauth2::openid::Config::new(
-        //             "webapp-dev",
+        //             "coap-ace-poc-webapp",
         //             ace_as_to_oauth_entry(DEMO_AS).unwrap(),
         //         ),
         //     ),
@@ -250,7 +250,7 @@ impl Component for Model {
                                         (
                                             Some(0),
                                             yew_oauth2::openid::Config::new(
-                                                "webapp-dev",
+                                                "coap-ace-poc-webapp",
                                                 String::from(oauth_uri.as_ref()),
                                             ),
                                         ),
