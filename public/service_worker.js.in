@@ -62,7 +62,10 @@ self.addEventListener('fetch', (e) => {
   e.respondWith(
     caches.match(e.request)
       // It'd be tempting to leave that out, but if something at installation
-    // failed and the scripts are not accessible through the service worker, at least they can be fetched now.
-      .then(function (response) { if (response) { return response } else { console.warn("Fetch resulted in cache miss, trying again for", e.request); return fetch(e.request); }})
+      // failed and the scripts are not accessible through the service worker, at least they can be fetched now.
+      //
+      // Moreover, at least during testing on localhost, this also handles
+      // requests that are made to the OAuth server and the AS.
+      .then(function (response) { if (response) { return response } else { return fetch(e.request); }})
   );
 });
