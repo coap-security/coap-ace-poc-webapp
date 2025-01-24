@@ -175,6 +175,9 @@ pub type Timestamp = instant::SystemTime;
 struct BlePoolBackend {
     front2back: futures::channel::mpsc::Receiver<FrontToBackMessage>,
     back2front: futures::channel::mpsc::Sender<BackToFrontMessage>,
+    /// Used by "on disconnect" callbacks. FIXME: This indicates we should rename the channels.
+    front2back_sender: futures::channel::mpsc::Sender<FrontToBackMessage>,
+
     /// BLE connections
     connections: std::collections::HashMap<DeviceId, BleConnection>,
     /// Most recent request creation hint obtained from the device with the given ID
@@ -222,6 +225,8 @@ struct BlePoolBackend {
 struct BleConnection {
     name: Option<String>,
     characteristic: web_sys::BluetoothRemoteGattCharacteristic,
+    #[expect(dead_code, reason = "stored just to create events and not get dropped")]
+    disconnect_hook: gloo_events::EventListener,
 }
 
 impl BlePool {
@@ -250,6 +255,7 @@ impl BlePool {
             bluetooth,
             front2back.1,
             back2front.0,
+            front2back.0.clone(),
         ));
 
         Ok((
@@ -384,17 +390,22 @@ impl BlePoolBackend {
         let device: web_sys::BluetoothDevice = device.into();
         log::info!("New device: {:?} ({:?})", device.name(), device.id());
 
-        // FIXME: do all the "device goes away" stuff properly (but right now we don't need it for
-        // the essential demo)
-        //         let changed = |evt: web_sys::Event| { log::info!("Event: {:?}", evt); };
-        //         let changed = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(changed);
-        //         let changed = Box::new(changed);
-        //         // FIXME CONTINUE HERE: Things work fine as long as that closure is kept around, we'll just
-        //         // make that box (probably doesn't even need boxing, given nobody asks for pinning here)
-        //         // part of our "connection".
-        //         let changed = Box::leak(changed);
-        //         use wasm_bindgen::JsCast;
-        //         device.set_ongattserverdisconnected(Some(changed.as_ref().unchecked_ref()));
+        let id = device.id();
+
+        // This may make the channe linger, but a) we don't really have to care, and b) it will be
+        // dropped when self is dropped because then the disconnect_hook goes away.
+        let mut disconnect_hook_to_back = self.front2back_sender.clone();
+        let disconnect_hook_id = id.clone();
+
+        let disconnect_hook =
+            gloo_events::EventListener::new(&device, "gattserverdisconnected", move |_| {
+                if disconnect_hook_to_back
+                    .try_send(FrontToBackMessage::Disconnect(disconnect_hook_id.clone()))
+                    .is_err()
+                {
+                    log::info!("Device disconnected but notification could not be sent");
+                }
+            });
 
         let server: BluetoothRemoteGattServer = device
             .gatt()
@@ -429,13 +440,12 @@ impl BlePoolBackend {
 
         log::info!("Device supports CoAP-over-GATT.");
 
-        let id = device.id();
-
         self.connections.insert(
             id.clone(),
             BleConnection {
                 characteristic,
                 name: device.name(),
+                disconnect_hook,
             },
         );
 
@@ -500,6 +510,7 @@ impl BlePoolBackend {
         bluetooth: web_sys::Bluetooth,
         front2back: futures::channel::mpsc::Receiver<FrontToBackMessage>,
         back2front: futures::channel::mpsc::Sender<BackToFrontMessage>,
+        front2back_sender: futures::channel::mpsc::Sender<FrontToBackMessage>,
     ) {
         log::debug!("Creating private key for use from this client instance");
         use lakers::CryptoTrait;
@@ -509,6 +520,7 @@ impl BlePoolBackend {
         let mut self_ = Self {
             front2back,
             back2front,
+            front2back_sender,
             connections: Default::default(),
             rs_identities: Default::default(),
             want_edhoc: Default::default(),
