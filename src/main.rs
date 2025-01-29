@@ -58,7 +58,7 @@ pub(crate) fn ace_as_to_oauth_entry(ace_as: &str) -> Option<&str> {
     ace_as.strip_suffix("/ace-oauth/token")
 }
 
-const DEMO_AS: &str = "http://localhost:1103/realms/edf/ace-oauth/token";
+const DEMO_AS: &str = "https://keycloak.coap.amsuess.com/realms/edf/ace-oauth/token";
 
 struct ManualDevice {
     as_uri: std::rc::Rc<str>,
