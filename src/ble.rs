@@ -20,6 +20,8 @@ use crate::helpers::PromiseExt;
 const UUID_US: &'static str = "8df804b7-3300-496d-9dfa-f8fb40a236bc";
 const UUID_UC: &'static str = "2a58fc3f-3c62-4ecc-8167-d66d4d9410c2";
 
+const BUFLEN: usize = 400;
+
 pub type DeviceId = String;
 type RequestCreationHints =
     ace_oscore_helpers::request_creation_hints::RequestCreationHints<String>;
@@ -38,10 +40,10 @@ pub struct DeviceDetails {
     pub rs_identity: Option<RequestCreationHints>,
     /// Description of the error that led to the absence of a token.
     pub why_no_token: Option<MissingTokenReason>,
-    /// Short form of the access token obtained for that connection, if any
+    /// Clone of the token to be displayed in summary, if any
     ///
     /// Accompanied by the time that token was obtained (on the system's time scale)
-    pub access_token: Option<(String, Timestamp)>,
+    pub access_token: Option<(std::rc::Rc<dcaf::AccessTokenResponse>, Timestamp)>,
     pub oscore_established: bool,
 }
 
@@ -68,13 +70,17 @@ pub enum FrontToBackMessage {
 
     /// Add a device based on request creation hints. Also removes security associations, if the
     /// device is already known.
-    AddDeviceManually(RequestCreationHints),
+    ///
+    /// The second argument selects whether an EDHOC token should be requested.
+    AddDeviceManually(RequestCreationHints, bool),
 
     /// Remove a BLE device (but not any credentials associated with it) from the list, and
     /// ask the browser to disconnect it.
     Disconnect(DeviceId),
 
+    // The non-BLE things we set because token acquisition has grown in here
     SetForceOffline(bool),
+    AsTokenAvailable((String, Option<String>)),
 }
 use FrontToBackMessage::*;
 
@@ -90,8 +96,21 @@ pub enum BackToFrontMessage {
     UpdateDeviceList((Vec<DeviceDetails>, Option<NetworkActivity>)),
     /// A temperature reading was obtained from a device
     ReceivedTemperature(DeviceId, Option<f32>),
+    /// Event to be processed not by the front end but by the application running it.
+    NotifyOutside(Notification),
 }
 use BackToFrontMessage::*;
+
+/// Subset of BackToFrontMessage that are exposed to the outside of the [`BlePool`]
+#[derive(Debug)]
+pub enum Notification {
+    /// An operation can non continue because of a missing OAuth AS key.
+    ///
+    /// I.e., "please send an [`FrontToBackMessage::AsTokenAvailable`] with this key"
+    // FIXME: The guidance should probably be to call some method that then does send the
+    // front-to-back message, because .request() should not be pub.
+    MissingAsToken(String),
+}
 
 /// Visualization hints for network activity, emitted along the device list
 #[derive(Debug)]
@@ -126,16 +145,18 @@ pub struct NoWebBluetoothSupport;
 
 #[derive(Debug)]
 enum TokenStatus {
-    Obtained(dcaf::AccessTokenResponse),
+    // Most users (notify_device_list and try_establish_security_context) would need to clone this
+    // constantly anyway; Rc'ing it already.
+    Obtained(std::rc::Rc<dcaf::AccessTokenResponse>),
     Failed(MissingTokenReason),
     // Not using a Result because we could have a Pending inbetween as well
 }
 use TokenStatus::*;
 
 impl TokenStatus {
-    fn get_obtained(&self) -> Option<&dcaf::AccessTokenResponse> {
+    fn get_obtained(&self) -> Option<std::rc::Rc<dcaf::AccessTokenResponse>> {
         match self {
-            Obtained(atr) => Some(atr),
+            Obtained(atr) => Some(atr.clone()),
             _ => None,
         }
     }
@@ -154,10 +175,15 @@ pub type Timestamp = instant::SystemTime;
 struct BlePoolBackend {
     front2back: futures::channel::mpsc::Receiver<FrontToBackMessage>,
     back2front: futures::channel::mpsc::Sender<BackToFrontMessage>,
+    /// Used by "on disconnect" callbacks. FIXME: This indicates we should rename the channels.
+    front2back_sender: futures::channel::mpsc::Sender<FrontToBackMessage>,
+
     /// BLE connections
     connections: std::collections::HashMap<DeviceId, BleConnection>,
     /// Most recent request creation hint obtained from the device with the given ID
     rs_identities: std::collections::HashMap<DeviceId, RequestCreationHints>,
+    /// Preference for whether or not for a device should request an EDHOC token.
+    want_edhoc: std::collections::HashMap<RequestCreationHints, bool>,
     /// RCHs that were not found in any concrete BLE device, but are known from other sources
     /// (add_device_manually).
     ///
@@ -173,13 +199,25 @@ struct BlePoolBackend {
     /// visualization.
     tokens: std::collections::HashMap<RequestCreationHints, (TokenStatus, Timestamp)>,
     /// Established security contexts
-    security_contexts: std::collections::HashMap<DeviceId, liboscore::PrimitiveContext>,
+    ///
+    /// The bytes stored along with the context is an EDHOC messag 3 that should be sent along
+    /// until confirmation is achieved.
+    security_contexts:
+        std::collections::HashMap<DeviceId, (liboscore::PrimitiveContext, Option<Box<[u8]>>)>,
 
     /// Override from the front-end to not attempt token requests
     ///
     /// This only makes sense in a demo; in production code, this would be ripped out without
     /// replacement.
     force_offline: bool,
+
+    /// Tokens usable for interactions with ASs
+    as_tokens: std::collections::HashMap<String, String>,
+
+    /// EDHOC key used with ACE EDHOC profile
+    edhoc_private_d: lakers::BytesP256ElemLen,
+    /// Public part of `edhoc_private_d`
+    edhoc_public_x: lakers::BytesP256ElemLen,
 }
 
 /// A BLE characteristic (from which the device, GATT and other JavaScript components can be
@@ -187,6 +225,8 @@ struct BlePoolBackend {
 struct BleConnection {
     name: Option<String>,
     characteristic: web_sys::BluetoothRemoteGattCharacteristic,
+    #[expect(dead_code, reason = "stored just to create events and not get dropped")]
+    disconnect_hook: gloo_events::EventListener,
 }
 
 impl BlePool {
@@ -204,7 +244,10 @@ impl BlePool {
         let bluetooth = navigator.bluetooth().ok_or(NoWebBluetoothSupport)?;
 
         // This can overflow; ideally, the front-end will disable its buttons while full
-        let front2back = futures::channel::mpsc::channel(1);
+        // Having more than 1 in here because this includes
+        // * messages from users clicking and
+        // * Availability updates on AS tokens.
+        let front2back = futures::channel::mpsc::channel(2);
         // This won't overflow realistically: everything that pushes in here can just wait
         let back2front = futures::channel::mpsc::channel(1);
 
@@ -212,6 +255,7 @@ impl BlePool {
             bluetooth,
             front2back.1,
             back2front.0,
+            front2back.0.clone(),
         ));
 
         Ok((
@@ -248,8 +292,8 @@ impl BlePool {
         self.request(Disconnect(device));
     }
 
-    pub fn add_device_manually(&mut self, rch: RequestCreationHints) {
-        self.request(AddDeviceManually(rch));
+    pub fn add_device_manually(&mut self, rch: RequestCreationHints, request_edhoc: bool) {
+        self.request(AddDeviceManually(rch, request_edhoc));
     }
 
     pub fn latest_temperature(&self, device: &str) -> Option<f32> {
@@ -263,18 +307,22 @@ impl BlePool {
     /// Request an action asynchronously from the backend.
     ///
     /// The backend will probably send notifications back at some point.
-    fn request(&mut self, message: FrontToBackMessage) {
+    // FIXME do we want to have this really public?
+    pub fn request(&mut self, message: FrontToBackMessage) {
         self.front2back.try_send(message)
-            .unwrap_or_else(|_| {
-                log::error!("Can not enqueue request: queue full. Proper queue management that disables buttons when the queue is full would circumvent that.");
+            .unwrap_or_else(|e| {
+                log::error!("Can not enqueue request: queue full. Proper queue management that disables buttons when the queue is full would circumvent that ({:?}).", e);
             });
     }
 
     /// Change entry point for the backend.
     ///
     /// The user (usually a yew component) needs to send any messages emitted by the receiver
-    /// created in `new()` into this function.
-    pub fn notify(&mut self, message: BackToFrontMessage) {
+    /// created in `new()` into this function, and should act on any returned notification (which
+    /// is the subset of what is passed on that actually the owner of the [`BlePool`] component
+    /// needs to act on).
+    #[must_use]
+    pub fn notify(&mut self, message: BackToFrontMessage) -> Option<Notification> {
         match message {
             UpdateDeviceList((mut list, network_activity)) => {
                 fn key(i: &DeviceDetails) -> (Option<&String>, Option<&String>) {
@@ -304,7 +352,9 @@ impl BlePool {
             ReceivedTemperature(id, None) => {
                 self.most_recent_temperatures.remove(&id);
             }
+            NotifyOutside(n) => return Some(n),
         }
+        None
     }
 
     pub fn set_force_offline(&mut self, force_offline: bool) {
@@ -325,36 +375,37 @@ impl BlePoolBackend {
             BluetoothRemoteGattServer, BluetoothRemoteGattService, RequestDeviceOptions,
         };
 
-        let device = wasm_bindgen_futures::JsFuture::from(
-            bluetooth.request_device(
-                RequestDeviceOptions::new().filters(
-                    &[BluetoothLeScanFilterInit::new().services(
-                        &[wasm_bindgen::JsValue::from(UUID_US)]
-                            .iter()
-                            .collect::<js_sys::Array>(),
-                    )]
-                    .iter()
-                    .collect::<js_sys::Array>(),
-                ),
-            ),
-        )
-        .await
-        .map_err(|_| "No device actually selected")?;
+        let filter = BluetoothLeScanFilterInit::new();
+        filter.set_services(
+            &[wasm_bindgen::JsValue::from(UUID_US)]
+                .iter()
+                .collect::<js_sys::Array>(),
+        );
+        let rdo = RequestDeviceOptions::new();
+        rdo.set_filters(&[filter].iter().collect::<js_sys::Array>());
+        let device = wasm_bindgen_futures::JsFuture::from(bluetooth.request_device(&rdo))
+            .await
+            .map_err(|_| "No device actually selected")?;
 
         let device: web_sys::BluetoothDevice = device.into();
         log::info!("New device: {:?} ({:?})", device.name(), device.id());
 
-        // FIXME: do all the "device goes away" stuff properly (but right now we don't need it for
-        // the essential demo)
-        //         let changed = |evt: web_sys::Event| { log::info!("Event: {:?}", evt); };
-        //         let changed = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(changed);
-        //         let changed = Box::new(changed);
-        //         // FIXME CONTINUE HERE: Things work fine as long as that closure is kept around, we'll just
-        //         // make that box (probably doesn't even need boxing, given nobody asks for pinning here)
-        //         // part of our "connection".
-        //         let changed = Box::leak(changed);
-        //         use wasm_bindgen::JsCast;
-        //         device.set_ongattserverdisconnected(Some(changed.as_ref().unchecked_ref()));
+        let id = device.id();
+
+        // This may make the channe linger, but a) we don't really have to care, and b) it will be
+        // dropped when self is dropped because then the disconnect_hook goes away.
+        let mut disconnect_hook_to_back = self.front2back_sender.clone();
+        let disconnect_hook_id = id.clone();
+
+        let disconnect_hook =
+            gloo_events::EventListener::new(&device, "gattserverdisconnected", move |_| {
+                if disconnect_hook_to_back
+                    .try_send(FrontToBackMessage::Disconnect(disconnect_hook_id.clone()))
+                    .is_err()
+                {
+                    log::info!("Device disconnected but notification could not be sent");
+                }
+            });
 
         let server: BluetoothRemoteGattServer = device
             .gatt()
@@ -389,13 +440,12 @@ impl BlePoolBackend {
 
         log::info!("Device supports CoAP-over-GATT.");
 
-        let id = device.id();
-
         self.connections.insert(
             id.clone(),
             BleConnection {
                 characteristic,
                 name: device.name(),
+                disconnect_hook,
             },
         );
 
@@ -418,13 +468,6 @@ impl BlePoolBackend {
         ids.extend(self.connections.keys());
         ids.extend(self.rs_identities.keys());
 
-        fn present_token(atr: &dcaf::AccessTokenResponse) -> String {
-            format!(
-                "{}",
-                hex::encode(&atr.access_token[atr.access_token.len() - 4..])
-            )
-        }
-
         let mut new_list: Vec<_> = ids
             .iter()
             .map(|id| {
@@ -438,9 +481,8 @@ impl BlePoolBackend {
                     name: con.and_then(|c| Some(c.name.as_ref()?.clone())),
                     rs_identity: rs_identity.cloned(),
                     why_no_token: token.and_then(|(ts, _)| ts.get_failed()),
-                    access_token: token.and_then(|(ts, when)| {
-                        ts.get_obtained().map(|o| (present_token(o), when.clone()))
-                    }),
+                    access_token: token
+                        .and_then(|(ts, when)| ts.get_obtained().map(|o| (o, when.clone()))),
                     oscore_established: self.security_contexts.contains_key(id),
                 }
             })
@@ -454,9 +496,8 @@ impl BlePoolBackend {
                 name: None,
                 rs_identity: Some(rch.clone()),
                 why_no_token: token.and_then(|(ts, _)| ts.get_failed()),
-                access_token: token.and_then(|(ts, when)| {
-                    ts.get_obtained().map(|o| (present_token(o), when.clone()))
-                }),
+                access_token: token
+                    .and_then(|(ts, when)| ts.get_obtained().map(|o| (o, when.clone()))),
                 oscore_established: false,
             }
         }));
@@ -469,16 +510,27 @@ impl BlePoolBackend {
         bluetooth: web_sys::Bluetooth,
         front2back: futures::channel::mpsc::Receiver<FrontToBackMessage>,
         back2front: futures::channel::mpsc::Sender<BackToFrontMessage>,
+        front2back_sender: futures::channel::mpsc::Sender<FrontToBackMessage>,
     ) {
+        log::debug!("Creating private key for use from this client instance");
+        use lakers::CryptoTrait;
+        let mut crypto = lakers_crypto_rustcrypto::Crypto::new(rand::thread_rng());
+        let (edhoc_private_d, edhoc_public_x) = crypto.p256_generate_key_pair();
+
         let mut self_ = Self {
             front2back,
             back2front,
+            front2back_sender,
             connections: Default::default(),
             rs_identities: Default::default(),
+            want_edhoc: Default::default(),
             preseeded_rch: Default::default(),
             tokens: Default::default(),
             security_contexts: Default::default(),
             force_offline: false,
+            as_tokens: Default::default(),
+            edhoc_private_d,
+            edhoc_public_x,
         };
 
         loop {
@@ -500,6 +552,7 @@ impl BlePoolBackend {
 
                             let rch = self_.try_get_rch(&id).await;
                             match rch {
+                                // Devices don't advertise it, but we use EDHOC by default
                                 Ok(rch) => self_.try_get_token(&rch).await,
                                 Err(e) => {
                                     log::error!("Failed to obtain request creation hints: {e}");
@@ -531,7 +584,7 @@ impl BlePoolBackend {
                         log::error!("Failed to identify device: {e}");
                     }
                 }
-                Some(AddDeviceManually(rch)) => {
+                Some(AddDeviceManually(rch, request_edhoc)) => {
                     if let Some(id) = self_
                         .rs_identities
                         .iter()
@@ -547,6 +600,7 @@ impl BlePoolBackend {
                     };
                     let _ = self_.tokens.remove(&rch);
                     self_.notify_device_list(None).await;
+                    self_.want_edhoc.insert(rch.clone(), request_edhoc);
                     self_.try_get_token(&rch).await;
                 }
                 Some(Disconnect(id)) => {
@@ -559,6 +613,40 @@ impl BlePoolBackend {
                 }
                 Some(SetForceOffline(force_offline)) => {
                     self_.force_offline = force_offline;
+                }
+                Some(AsTokenAvailable((endpoint, token))) => {
+                    if let Some(token) = token {
+                        self_.as_tokens.insert(endpoint.clone(), token);
+
+                        // If there are any devices that are waiting for a token, we don't have
+                        // enough context to continue what they were last doing (also that would be
+                        // excessive), but we can get tokens.
+                        //
+                        // We have to clone in here because try_get_token needs mut self, and
+                        // there's no easy way to promise to the compiler that we don't alter the
+                        // items of rs_identities.
+                        //
+                        // (This could be made more efficient, but at the cost of readability.)
+                        let rs_identities_cloned: Vec<_> = self_
+                            .rs_identities
+                            .values()
+                            .chain(self_.preseeded_rch.iter())
+                            .cloned()
+                            .collect();
+                        for rsi in rs_identities_cloned.into_iter() {
+                            if crate::ace_as_to_oauth_entry(&rsi.as_uri)
+                                .is_some_and(|u| u == &endpoint)
+                            {
+                                self_.try_get_token(&rsi).await;
+                            }
+                        }
+                        // FIXME: That we can't tell whether or not activity was here indicates
+                        // that we should do this better somewhere else. (Maybe notify of the list
+                        // here but of the network activity independently).
+                        self_.notify_device_list(None).await;
+                    } else {
+                        self_.as_tokens.remove(&endpoint);
+                    }
                 }
                 // Whatever spawned us doesn't want us any more
                 None => break,
@@ -577,17 +665,18 @@ impl BlePoolBackend {
         let connection = &self.connections[id];
 
         let mut carry = None;
-        let mut request = coap_gatt_utils::write::<400>(|msg| {
+        let mut request = coap_gatt_utils::write::<{ BUFLEN }>(|msg| {
             carry = Some(write_request(msg));
         });
         // FIXME: Maybe change coap_gatt_utils so this nees less patching?
         let carry = carry.expect("write always invokes the writer");
 
-        log::debug!("Writing request: {} bytes", request.len());
+        log::debug!("Writing request: {} bytes ({:?})", request.len(), request);
 
         let result = connection
             .characteristic
-            .write_value_with_u8_array(&mut request)
+            .write_value_without_response_with_u8_slice(&mut request)
+            .map_err(|_| "Write failed")?
             .js2rs()
             .await;
 
@@ -616,6 +705,13 @@ impl BlePoolBackend {
             let response = js_sys::Uint8Array::new(&response.buffer()).to_vec();
 
             if response.len() > 0 {
+                match coap_numbers::code::classify(response[0]) {
+                    coap_numbers::code::Range::Response(_) => (),
+                    class => {
+                        log::debug!("Read non-empty response but code was {:02x} ({:?}), waiting for the actual response", response[0], class);
+                        continue;
+                    }
+                }
                 log::debug!("Read response: {} bytes", response.len());
                 break response;
             }
@@ -645,7 +741,7 @@ impl BlePoolBackend {
         // sub-optimal, but a) a practical simplification for tossing it around between to
         // closures, and b) kind of a consequence of PrimitiveContext only being usable &mut rather
         // than being usable through the more elaborate means provided by liboscore.
-        let mut ctx = self
+        let (mut ctx, msg3) = self
             .security_contexts
             .remove(id)
             .ok_or("No security context available")?;
@@ -654,10 +750,58 @@ impl BlePoolBackend {
             .send_request(
                 id,
                 |request| {
+                    use coap_message::{
+                        MessageOption, MinimalWritableMessage, MutableWritableMessage,
+                        ReadableMessage,
+                    };
+                    let mut code_buffer = 0;
+                    let mut buffer = [0; BUFLEN - 1];
+                    let mut liboscore_spool =
+                        coap_message_implementations::inmemory_write::GenericMessage::new(
+                            &mut code_buffer,
+                            &mut buffer,
+                        );
+
+                    // Encrypting message into a buffer first, then merging in the EDHOC option --
+                    // libOSCORE can't pass through unencrypted data, see
+                    // <https://gitlab.com/oscore/liboscore/-/merge_requests/15>.
+                    //
+                    // Can certainly be done in a more pretty fashion, but this is due for
+                    // replacement with coapcore, which is better equipped.
+
                     let correlation_usercarry =
-                        liboscore::protect_request(request, &mut ctx, |request| {
+                        liboscore::protect_request(&mut liboscore_spool, &mut ctx, |request| {
                             write_request(request)
                         });
+
+                    // FIXME: Error handling
+                    request.set_code(liboscore_spool.code());
+                    let mut added_edhoc = false;
+                    for o in liboscore_spool.options() {
+                        if o.number() > coap_numbers::option::EDHOC
+                            && msg3.is_some()
+                            && added_edhoc == false
+                        {
+                            request
+                                .add_option(coap_numbers::option::EDHOC, b"")
+                                .unwrap();
+                            added_edhoc = true;
+                        }
+                        request.add_option(o.number(), o.value()).unwrap();
+                    }
+                    if msg3.is_some() && added_edhoc == false {
+                        request
+                            .add_option(coap_numbers::option::EDHOC, b"")
+                            .unwrap();
+                    }
+
+                    let prefix = msg3.as_deref().unwrap_or(&[]);
+                    let mapped = request
+                        .payload_mut_with_len(prefix.len() + liboscore_spool.payload().len())
+                        .unwrap();
+                    mapped[..prefix.len()].copy_from_slice(prefix);
+                    mapped[prefix.len()..].copy_from_slice(liboscore_spool.payload());
+
                     (ctx, correlation_usercarry)
                 },
                 |response, (mut ctx, correlation_usercarry)| {
@@ -676,10 +820,14 @@ impl BlePoolBackend {
                             }
                         }
                         let Some(oscore_option) = oscore_option.as_ref() else {
-                            return (ctx, Err("No OSCORE option, server did not have a suitable context"))
+                            return (
+                                ctx,
+                                Err("No OSCORE option, server did not have a suitable context"),
+                            );
                         };
-                        let Ok(oscore_option) = liboscore::OscoreOption::parse(oscore_option) else {
-                            return (ctx, Err("Server produced invalid OSCORE option"))
+                        let Ok(oscore_option) = liboscore::OscoreOption::parse(oscore_option)
+                        else {
+                            return (ctx, Err("Server produced invalid OSCORE option"));
                         };
 
                         let user_response = liboscore::unprotect_response(
@@ -699,7 +847,7 @@ impl BlePoolBackend {
             .await?;
 
         if user_response.is_ok() {
-            self.security_contexts.insert(id.to_string(), ctx);
+            self.security_contexts.insert(id.to_string(), (ctx, None));
         } else {
             // Let's not even put back the security context -- it just failed, so it's probably
             // broken. As we've received a response and it's really just the OSCORE layer that was
@@ -739,8 +887,10 @@ impl BlePoolBackend {
             |request| {
                 use coap_message::MinimalWritableMessage;
                 request.set_code(coap_numbers::code::PUT.try_into().unwrap());
-                request.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"time");
-                request.set_payload(&time_now_buffer);
+                request
+                    .add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"time")
+                    .unwrap();
+                request.set_payload(&time_now_buffer).unwrap();
             },
             |response, ()| {
                 use coap_message::ReadableMessage;
@@ -763,8 +913,9 @@ impl BlePoolBackend {
             |request| {
                 use coap_message::MinimalWritableMessage;
                 request.set_code(coap_numbers::code::GET.try_into().unwrap());
-                request.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"temp");
-                request.set_payload(&[]);
+                request
+                    .add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"temp")
+                    .unwrap();
             },
             |response, ()| {
                 use coap_message::ReadableMessage;
@@ -785,8 +936,9 @@ impl BlePoolBackend {
             |request| {
                 use coap_message::MinimalWritableMessage;
                 request.set_code(coap_numbers::code::GET.try_into().unwrap());
-                request.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"temp");
-                request.set_payload(&[]);
+                request
+                    .add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"temp")
+                    .unwrap();
             },
             |response, ()| {
                 use coap_message::ReadableMessage;
@@ -832,11 +984,12 @@ impl BlePoolBackend {
             |request| {
                 use coap_message::MinimalWritableMessage;
                 request.set_code(coap_numbers::code::POST.try_into().unwrap());
-                request.add_option(
-                    coap_numbers::option::URI_PATH.try_into().unwrap(),
-                    b"identify",
-                );
-                request.set_payload(&[]);
+                request
+                    .add_option(
+                        coap_numbers::option::URI_PATH.try_into().unwrap(),
+                        b"identify",
+                    )
+                    .unwrap();
             },
             |_, ()| {},
         )
@@ -855,8 +1008,10 @@ impl BlePoolBackend {
             |request| {
                 use coap_message::MinimalWritableMessage;
                 request.set_code(coap_numbers::code::PUT.try_into().unwrap());
-                request.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"leds");
-                request.set_payload(&level_buffer);
+                request
+                    .add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"leds")
+                    .unwrap();
+                request.set_payload(&level_buffer).unwrap();
             },
             |_, ()| {},
         )
@@ -901,8 +1056,9 @@ impl BlePoolBackend {
                 request.add_option(
                     coap_numbers::option::URI_PATH.try_into().unwrap(),
                     b"authz-info",
-                );
-                request.set_payload(&payload);
+                ).unwrap();
+                request.set_payload(&payload)
+                    .unwrap();
             },
             |response, ()| {
                 use coap_message::ReadableMessage;
@@ -936,7 +1092,10 @@ impl BlePoolBackend {
     /// Try to determine the audience value of a given peer.
     ///
     /// FIXME: This should be less clone-y.
-    async fn try_get_rch<'a>(&'a mut self, id: &'a str) -> Result<RequestCreationHints, &'static str> {
+    async fn try_get_rch<'a>(
+        &'a mut self,
+        id: &'a str,
+    ) -> Result<RequestCreationHints, &'static str> {
         if let Some(rch) = self.rs_identities.get(id) {
             // All is fine already
             return Ok(rch.clone());
@@ -949,21 +1108,11 @@ impl BlePoolBackend {
 
         // If we don't get any, it's probably game over here, but no
         // reason to crash
-        self.rs_identities.insert(id.to_string(), rs_identity.clone());
+        self.rs_identities
+            .insert(id.to_string(), rs_identity.clone());
         self.notify_device_list(None).await;
 
         Ok(rs_identity)
-    }
-
-    /// For a given token path, find any Authorization value we have available
-    fn http_authorization_for(&self, token_uri: &str) -> Option<String> {
-        for (uri, authorization, _) in crate::authorizations::current_authorizations() {
-            if token_uri == uri {
-                // which would be None where we're not logged in, and that's fine
-                return Some(authorization);
-            }
-        }
-        None
     }
 
     /// Try to fetch a token from the AS for the audience the RS claimed to be
@@ -987,63 +1136,154 @@ impl BlePoolBackend {
             return;
         }
 
-        log::info!("Trying to get a token...");
+        let request_edhoc = self.want_edhoc.get(rch).unwrap_or(&true);
+
+        log::info!("Trying to get a token... (for EDHOC? {request_edhoc})");
         use web_sys::{Request, RequestCredentials, RequestInit, RequestMode, Response};
 
         let mut token_request = std::collections::HashMap::new();
-        token_request.insert(5u8, &rch.audience);
+        token_request.insert(
+            5u8, // audience
+            ciborium::Value::from(rch.audience.clone()),
+        );
+        // We could use dcaf's TokenRequest builder here, but that won't allow us to specify the
+        // profile. 9200 is a bit inexact here in that it talks twice of that the use can specify
+        // null here (in 5.8.4.3 and 5.8.1), but is nowhere explicit that setting a concrete
+        // profile is fine as well (and dcaf only sends empty values).
+        // See <https://github.com/namib-project/dcaf-rs/issues/28>
+        if !request_edhoc {
+            token_request.insert(
+                38u8,                       // ace_profile
+                ciborium::Value::from(2u8), // coap_oscore
+            );
+        } else {
+            token_request.insert(38u8, ciborium::Value::from(4u8)); // ace_profile: coap_edhoc_oscore
+            use coset::AsCborValue;
+            token_request.insert(
+                4, // req_cnf
+                ciborium::Value::Map(vec![(
+                    // FIXME: Do we really want to have a COSE_Key right in there, or do we rather
+                    // expect a kccs that contains a cnf that contains a COSE_Key?
+                    ciborium::Value::from(1), // COSE_Key
+                    coset::CoseKey {
+                        kty: coset::KeyType::Assigned(coset::iana::KeyType::EC2.into()),
+                        params: vec![
+                            (
+                                coset::Label::Int(-1),      // crv
+                                ciborium::Value::from(1u8), // P-256
+                            ),
+                            (
+                                coset::Label::Int(-2), // x
+                                ciborium::Value::Bytes(self.edhoc_public_x.into()),
+                            ),
+                            (
+                                // FIXME: The AS expects this to be present, event
+                                // though there is no reason all around to have
+                                // it, so we send dummy values
+                                coset::Label::Int(-3), // y
+                                ciborium::Value::Bytes([0; 32].into()),
+                            ),
+                        ],
+                        ..Default::default()
+                    }
+                    .to_cbor_value()
+                    .unwrap(),
+                )]),
+            );
+        }
+
         let mut request_buffer = Vec::with_capacity(50);
         ciborium::ser::into_writer(&token_request, &mut request_buffer)
             .expect("Map can be encoded");
         let body = js_sys::Uint8Array::from(request_buffer.as_slice());
-        let mut opts = RequestInit::new();
-        opts.method("POST")
-            .mode(RequestMode::Cors)
-            .credentials(RequestCredentials::Omit) // Third party cookies would be blocked
-            // anyway
-            .body(Some(&body));
+        let opts = RequestInit::new();
+        opts.set_method("POST");
+        opts.set_mode(RequestMode::Cors);
+        opts.set_credentials(RequestCredentials::Omit);
+        opts.set_body(&body);
 
         let Ok(request) = Request::new_with_str_and_init(&rch.as_uri, &opts) else {
             // More like "Browser can't even figure out how server would be reached"
             self.set_token(rch.clone(), Failed(MissingTokenReason::ServerUnavailable));
-            self.notify_device_list(Some(NetworkActivity::Failure)).await;
-            return
+            self.notify_device_list(Some(NetworkActivity::Failure))
+                .await;
+            return;
         };
 
-        if let Some(authvalue) = self.http_authorization_for(&rch.as_uri) {
-            request.headers().set("Authorization", &authvalue).unwrap();
+        if let Some(suitable_openid_endpoint) = crate::ace_as_to_oauth_entry(&rch.as_uri) {
+            if let Some(suitable_token) = self.as_tokens.get(suitable_openid_endpoint) {
+                request
+                    .headers()
+                    .set("Authorization", &format!("Bearer {}", suitable_token))
+                    .unwrap();
+            } else {
+                // We may keep trying, but realistically things fail here; already requesting the
+                // new token.
+                self.notify(BackToFrontMessage::NotifyOutside(
+                    Notification::MissingAsToken(rch.as_uri.clone()),
+                ))
+                .await;
+            };
         }
 
         let window = web_sys::window().expect("Running in a browser");
-        let Ok(resp_value) = window.fetch_with_request(&request).js2rs().await else {
-            self.set_token(rch.clone(), Failed(MissingTokenReason::ServerUnavailable));
-            self.notify_device_list(Some(NetworkActivity::Failure)).await;
-            return
+        let fetch_result = window.fetch_with_request(&request).js2rs().await;
+        let Ok(resp_value) = fetch_result else {
+            // FIXME: Either enhance the request's chances of showing us the error properly
+            // (populating the replacement for ace_as_to_oauth_entry), or run
+            // ace_as_to_oauth_entry -- and then populate the logins list.
+            // (But practically populating that list works best when we have popup logins).
+            // FIXME can't distinguish this from MissingTokenReason::ServerUnavailable without such
+            // an output.
+            self.set_token(rch.clone(), Failed(MissingTokenReason::Unauthorized));
+            self.notify_device_list(Some(NetworkActivity::Failure))
+                .await;
+            return;
         };
 
         let resp: Response = resp_value.try_into().unwrap();
         match resp.status() {
+            // FIXME: With OAuth we get those both when we're not logged in at all and when that
+            // device doesn't exist (or might exist but we may not be authorized to use it)
             401 => {
                 self.set_token(rch.clone(), Failed(MissingTokenReason::Unauthorized));
                 self.notify_device_list(Some(NetworkActivity::Success))
                     .await;
             }
             201 => {
-                let Ok(token_response) = resp.array_buffer() else { return };
-                let Ok(token_response) = token_response.js2rs().await else { return };
+                let Ok(token_response) = resp.array_buffer() else {
+                    return;
+                };
+                let Ok(token_response) = token_response.js2rs().await else {
+                    return;
+                };
                 // There is a view method, but it's too unsafe
                 let token_response = js_sys::Uint8Array::new(&token_response).to_vec();
 
                 use dcaf::ToCborMap;
-                let Ok(token_response) = dcaf::AccessTokenResponse::deserialize_from(token_response.as_slice()) else {
-                        log::error!("Token response could not be parsed");
-                        return
-                    };
+                let parsed = dcaf::AccessTokenResponse::deserialize_from(token_response.as_slice());
+                let token_response = match parsed {
+                    Ok(p) => p,
+                    Err(e) => {
+                        log::error!(
+                            "Token response could not be parsed (got: {:02x?}, error: {:?})",
+                            token_response,
+                            e
+                        );
+                        return;
+                    }
+                };
 
-                self.set_token(rch.clone(), Obtained(token_response));
+                log::info!("Token obtained.");
+                if let Some(dcaf::Scope::AifEncoded(s)) = &token_response.scope {
+                    log::debug!(
+                        "Token indicats permissions on {:?}, but all buttons are left usable to demonstrate that decision is with the server.", s
+                    );
+                }
+
+                self.set_token(rch.clone(), Obtained(token_response.into()));
                 self.notify_device_list(Some(NetworkActivity::Success))
                     .await;
-                log::info!("Token obtained.");
             }
             _ => {
                 log::error!("Token endpoint reported unexpected code");
@@ -1070,12 +1310,34 @@ impl BlePoolBackend {
             return;
         };
         log::info!("Trying to establish a security context.");
-        log::debug!("Token: {token_response:?}");
 
-        // FIXME: This could be avoided if we didn't use &mut so often during requesting (but we do
-        // need exclusvie access to one of the security contexts).
         let token_response = token_response.clone();
-        let Some(dcaf::ProofOfPossessionKey::OscoreInputMaterial(material)) = &token_response.cnf.as_ref() else {
+        match token_response.ace_profile {
+            Some(dcaf::AceProfile::CoapOscore) => {
+                self.try_establish_oscore(id, token_response).await;
+            }
+            Some(dcaf::AceProfile::Other(4)) => {
+                match self.try_establish_edhoc(id, token_response).await {
+                    Ok(()) => (),
+                    Err(e) => {
+                        log::error!("Error during EDHOC exchange: {}", e);
+                    }
+                }
+            }
+            _ => {
+                log::error!("Token is not for any known profile.");
+            }
+        }
+    }
+
+    async fn try_establish_oscore(
+        &mut self,
+        id: &str,
+        token_response: std::rc::Rc<dcaf::AccessTokenResponse>,
+    ) {
+        let Some(dcaf::ProofOfPossessionKey::OscoreInputMaterial(material)) =
+            &token_response.cnf.as_ref()
+        else {
             log::error!("Token is unusable for the ACE OSCORE profile");
             return;
         };
@@ -1107,7 +1369,8 @@ impl BlePoolBackend {
                 .unwrap();
 
                 log::info!("Derived OSCORE context now to be used with {id:?}");
-                self.security_contexts.insert(id.to_string(), context);
+                self.security_contexts
+                    .insert(id.to_string(), (context, None));
                 self.notify_device_list(None).await;
             }
             Err(e) => {
@@ -1119,6 +1382,204 @@ impl BlePoolBackend {
                 self.notify_device_list(None).await;
             }
         }
+    }
+
+    async fn try_establish_edhoc(
+        &mut self,
+        id: &str,
+        token_response: std::rc::Rc<dcaf::AccessTokenResponse>,
+    ) -> Result<(), String> {
+        use coap_message::{MinimalWritableMessage, MutableWritableMessage, ReadableMessage};
+        use coap_message_utils::OptionsExt;
+        use lakers::{EDHOCMethod::StatStat, EDHOCSuite::CipherSuite2, EdhocMessageBuffer};
+        use lakers_crypto_rustcrypto::Crypto;
+
+        let rs_cnf = &token_response
+            .rs_cnf
+            .as_ref()
+            .ok_or("Token is missing rs_cnf")?;
+
+        use coset::{iana::KeyType::EC2, CoseKey, RegisteredLabel::Assigned};
+        use dcaf::ProofOfPossessionKey::PlainCoseKey;
+        let PlainCoseKey(CoseKey {
+            kty: Assigned(EC2),
+            params,
+            ..
+        }) = rs_cnf
+        else {
+            return Err(format!(
+                "rs_cnf is not shaped as expected; found {:?}",
+                rs_cnf
+            ));
+        };
+
+        use ciborium::Value::{Bytes, Integer};
+        use coset::Label::Int;
+        let [(Int(-1), Integer(crv)), (Int(-2), Bytes(rs_cnf_x)), (Int(-3), Bytes(rs_cnf_y))] =
+            &params[..]
+        else {
+            return Err(format!(
+                "rs_cnf is not shaped as expected; found params {:?}",
+                params
+            ));
+        };
+
+        if u8::try_from(*crv) != Ok(1) {
+            return Err(format!("rs_cnf is not on expectec urve; found {:?}", crv));
+        }
+
+        let access_token = token_response
+            .access_token
+            .as_slice()
+            .try_into()
+            .map_err(|_| "AS token too large for Lakers")?;
+
+        let c_i = lakers::ConnId::from_slice(&[0]).unwrap();
+        let initiator =
+            lakers::EdhocInitiator::new(Crypto::new(rand::thread_rng()), StatStat, CipherSuite2);
+        let (initiator, m1) = initiator
+            .prepare_message_1(Some(c_i), &None)
+            .map_err(|e| format!("Error preparing message 1: {:?}", e))?;
+
+        let m2 = self
+            .send_request(
+                id,
+                |msg| {
+                    msg.set_code(coap_numbers::code::POST.try_into().unwrap());
+                    msg.add_option(
+                        coap_numbers::option::URI_PATH.try_into().unwrap(),
+                        b".well-known",
+                    )
+                    .unwrap();
+                    msg.add_option(coap_numbers::option::URI_PATH.try_into().unwrap(), b"edhoc")
+                        .unwrap();
+                    let payload = msg.payload_mut_with_len(1 + m1.len).unwrap();
+                    payload[0] = 0xf5; // CBOR True
+                    payload[1..].copy_from_slice(m1.as_slice());
+                },
+                |response, _| {
+                    use coap_message_utils::ShowMessageExt;
+                    log::info!("Device responded to EDHOC message 1: {:?}", response.show());
+                    if response.code() != coap_numbers::code::CHANGED {
+                        return Err("Unexpected code");
+                    }
+                    if response.options().ignore_elective_others().is_err() {
+                        return Err("Response has unknown critical options");
+                    }
+
+                    Ok(EdhocMessageBuffer::new_from_slice(response.payload())
+                        .map_err(|_| "M2 exceeds Lakers' buffers")?)
+                },
+            )
+            .await?
+            .map_err(|e| format!("Error processing the response: {}", e))?;
+
+        let (mut initiator, conn_id, id_cred, _ead) = initiator
+            .parse_message_2(&m2)
+            .map_err(|e| format!("Processing M2 failed: {:?}", e))?;
+
+        // We're ignoring the ID_CRED_R: The credential we receive from the AS is a COSE key, which
+        // when converted by prefixing 0xA108A101, has no key ID. (The peer could send the
+        // credential by value, but why should it).
+        let _ = id_cred;
+
+        // This conversion is not exactly the one mentioned in RFC9528 as prefixing with 0xA108A101
+        // -- instead we do more, adding a key ID and an empty scope(?), because Lakers' parser
+        // insists that those be present. (We could sidestep this by avoiding its parser, which we
+        // should probably do on the long run).
+
+        // for peer:
+        let peer_cred = {
+            // FIXME move … somewhere (duplicated w/ firmware)
+            let mut credential = hex_literal::hex!("A2 02 60 08 A1 01 A5 01 02 02 41 63 20 01 21 5820 7878787878787878787878787878787878787878787878787878787878787878 22 5820 7979797979797979797979797979797979797979797979797979797979797979");
+            // FIXME verify length
+            credential[17..17 + 32].copy_from_slice(&rs_cnf_x);
+            credential[52..52 + 32].copy_from_slice(&rs_cnf_y);
+            log::info!(
+                "Reconstructed RS's credential as received from AS as {:02x?}",
+                credential
+            );
+            lakers::Credential::parse_ccs(&credential).unwrap()
+        };
+
+        // for self:
+        let our_cred = {
+            let mut cred = lakers::BufferCred::new();
+            cred.extend_from_slice(&[0xa1, 0x08, 0xa1, 0x01]).unwrap();
+            // The bare minimum; TBD check how we send that (maybe we build the COSEKey somewhere
+            // else already)
+            cred.extend_from_slice(&[0xa4, 0x01, 0x02, 0x20, 0x01, 0x21, 0x58, 0x20])
+                .unwrap();
+            cred.extend_from_slice(&self.edhoc_public_x).unwrap();
+            cred.extend_from_slice(&[0x22, 0x58, 0x20]).unwrap();
+            cred.extend_from_slice(&[0; 32]).unwrap();
+            let mut cred = lakers::Credential::new_ccs(cred, self.edhoc_public_x);
+            // Our credential needs to contain *something* to send by reference, we set an
+            // arbitrary KID (picking the 1-long version that works even before
+            // <https://github.com/openwsn-berkeley/lakers/pull/326>)
+            cred.kid = Some(lakers::EdhocBuffer::from_hex("00"));
+            cred
+        };
+
+        // Not sure why, but Lakers requires set_identity to be called already before
+        // verify_message_2 before creating message 3.
+        initiator
+            .set_identity(self.edhoc_private_d, our_cred)
+            .unwrap();
+
+        let initiator = initiator
+            .verify_message_2(peer_cred)
+            .map_err(|e| format!("Verification of message 2 failed: {:?}", e))?;
+
+        let ead_token = lakers::EADItem {
+            // Beware of https://github.com/openwsn-berkeley/lakers/issues/329
+            label: 20,
+            // We might want to send it as critical, given there's no chance otherwise, but again,
+            // https://github.com/openwsn-berkeley/lakers/issues/329
+            is_critical: false,
+            value: Some(access_token),
+        };
+        let (mut initiator, m3, _prk_out) = initiator
+            .prepare_message_3(lakers::CredentialTransfer::ByReference, &Some(ead_token))
+            .unwrap();
+
+        // FIXME: This is hacked up from coapcore's seccontext, where a similar derivation happens
+        // on the other side.
+        let oscorecontext = {
+            let oscore_secret = initiator.edhoc_exporter(0u8, &[], 16); // label is 0
+            let oscore_salt = initiator.edhoc_exporter(1u8, &[], 8); // label is 1
+            let oscore_secret = &oscore_secret[..16];
+            let oscore_salt = &oscore_salt[..8];
+
+            let sender_id = conn_id.as_slice();
+            let recipient_id = c_i.as_slice();
+
+            // FIXME probe cipher suite
+            let hkdf = liboscore::HkdfAlg::from_number(5).unwrap();
+            let aead = liboscore::AeadAlg::from_number(10).unwrap();
+
+            let immutables = liboscore::PrimitiveImmutables::derive(
+                hkdf,
+                oscore_secret,
+                oscore_salt,
+                None,
+                aead,
+                sender_id,
+                recipient_id,
+            )
+            // FIXME convert error
+            .unwrap();
+
+            liboscore::PrimitiveContext::new_from_fresh_material(immutables)
+        };
+
+        self.security_contexts
+            .insert(id.into(), (oscorecontext, Some(Box::from(m3.as_slice()))));
+        self.notify_device_list(None).await;
+
+        log::info!("Client context is now ready to send a request; message 3 will be sent then. We have verified the peer, but not authenticated to it.");
+
+        Ok(())
     }
 
     fn set_token(&mut self, rch: RequestCreationHints, token: TokenStatus) {

@@ -13,23 +13,25 @@ repository = "https://gitlab.com/oscore/coap-ace-poc-webapp/"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-yew = { version = "^0.20", features = [ "csr" ] }
+yew = { version = "^0.21", features = [ "csr" ] }
 gloo-net = { version = "0.2.4", features = [ "websocket" ] }
 gloo-events = "0.1.2"
 console_error_panic_hook = "^0.1.7"
 log = "^0.4"
-console_log = "^0.2"
-wasm-bindgen = "^0.2.83"
-wasm-bindgen-futures = "^0.4.33"
+console_log = { version = "^1", features = [ "color" ] }
+fern = "0.7"
+wasm-bindgen = "^0.2.100"
+wasm-bindgen-futures = "^0.4.45"
 futures = "0.3.25"
 js-sys = "^0.3.60"
-web-sys = { version = "= 0.3.60", features = [ "Navigator" , "Bluetooth", "RequestDeviceOptions", "BluetoothDevice", "BluetoothRemoteGattServer", "BluetoothRemoteGattService", "BluetoothRemoteGattCharacteristic", "BluetoothLeScanFilterInit", "BluetoothCharacteristicProperties"] }
+web-sys = { version = "= 0.3.77", features = [ "Navigator" , "Bluetooth", "RequestDeviceOptions", "BluetoothDevice", "BluetoothRemoteGattServer", "BluetoothRemoteGattService", "BluetoothRemoteGattCharacteristic", "BluetoothLeScanFilterInit", "BluetoothCharacteristicProperties", "BroadcastChannel"] }
 instant = { version = "0.1.12", features = [ "wasm-bindgen" ] }
 dcaf = { version = "0.3.1", default-features = false }
 url = "2"
 
-coap-message = "0.2.3"
-coap-gatt-utils = { git = "https://gitlab.com/oscore/coap-gatt-utils/" }
+coap-message = "0.3.5"
+coap-message-implementations = { version = "0.1.6", features = [ "alloc" ] }
+coap-gatt-utils = { git = "https://gitlab.com/oscore/coap-gatt-utils/", branch = "v02" }
 coap-numbers = "0.2.0"
 
 ciborium = { version = "0.2", default-features = false }
@@ -38,11 +40,11 @@ ciborium-io = { version = "0.2", default-features = false }
 # one of the key tools when working with CBOR and serde...
 serde_bytes = "0.11"
 
-liboscore = "0.1.0"
-liboscore-msgbackend = { version = "0.1.0", features = [ "alloc" ] }
+liboscore = "0.2.2"
+liboscore-msgbackend = { version = "0.2.2", features = [ "alloc" ] }
 # only to enable the feature
 # liboscore-cryptobackend = { version = "0.1.0", features = [ "log_cryptographic_operations_including_secret_keys" ] }
-ace-oscore-helpers = { git = "https://gitlab.com/oscore/ace-oscore-helpers/", features = [ "liboscore", "alloc" ] }
+ace-oscore-helpers = { git = "https://gitlab.com/oscore/ace-oscore-helpers/", features = [ "liboscore", "alloc" ], branch = "v02" }
 coset = "0.3.3"
 
 rand = "0.8.5"
@@ -53,6 +55,17 @@ getrandom = { version = "0.2", features = [ "js" ] }
 serde_cbor = "*"
 
 hex = "0.4.3"
+# We're using the OpenID aspect only to show whom we're logged in as
+yew-oauth2 = { version = "0.11.0", features = ["openid"] }
+openidconnect = "3" # not pub exported but used from yew-oauth2?
+
+lakers = "0.7"
+lakers-shared = { version  = "0.7", features = ["quadruple_sizes"] }
+lakers-crypto-rustcrypto = "0.7"
+coap-message-utils = "0.3.8"
+hex-literal = "0.4.1"
+uuid = { version = "1.12.1", features = ["v4"], default-features = false }
+cbor-edn = { version = "0.0.8", default-features = false }
 
 [build-dependencies]
 # Note that this works best when not doing shallow clones while git2 doesn't
@@ -62,3 +75,5 @@ built = { version = "0.5.2", features = [ "git2" ] }
 [patch.crates-io]
 coset = { git = "https://github.com/chrysn-pull-requests/coset", branch = "oscore" }
 dcaf = { git = "https://github.com/chrysn-pull-requests/dcaf-rs", branch = "oscore" }
+
+yew-oauth2 = { git = "https://github.com/chrysn-pull-requests/yew-oauth2", rev = "c3c784b9de5c2007ad5584280b72c7789f99102b" } # from branch enable-window / https://github.com/ctron/yew-oauth2/pull/45

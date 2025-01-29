@@ -8,9 +8,9 @@
 // Populated by the build process, this ensures there is variation on the
 // service worker file, so updates get eventually detected (although they might
 // need a manual refresh, or even a double refresh)
-// Build-ID: BUILDID
+const CACHE_NAME = "coap-ace-poc-webapp-cache-BUILDID";
 
-var all_files = [
+const APP_STATIC_RESOURCES = [
   './',
   './manifest.json',
   './coap-ace-poc-webapp.js',
@@ -20,8 +20,41 @@ var all_files = [
 ];
 
 self.addEventListener('install', function(e) {
+  // Those are cached in here; let's not get browser cache in the way.
+  //
+  // In a production environment it may be more suitable to serve files
+  // from different paths or to serve them with cache-control:
+  // must-revalidate (both would enable on-path proxies), but here we want
+  // things to update fast for development.
+  const headers = new Headers();
+  headers.set("Cache-Control", "max-age=0");
+
   e.waitUntil(
-    caches.open('coap-ace-poc-webapp-cache').then((cache) => cache.addAll(all_files))
+    caches.open(CACHE_NAME).then((cache) =>
+      cache.addAll(APP_STATIC_RESOURCES.map((f) => new Request(f, {"headers": headers})))
+  ));
+
+  // The new service worker can already pass on all the requests (effectively
+  // that's what it does anyway); by the time it is done here, all files in the
+  // manifest were already loaded by the application, and will only be accessed
+  // again on a reload anyway.
+  self.skipWaiting();
+});
+
+// delete old caches on activate
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    (async () => {
+      const names = await caches.keys();
+      await Promise.all(
+        names.map((name) => {
+          if (name !== CACHE_NAME) {
+            return caches.delete(name);
+          }
+        })
+      );
+      await clients.claim();
+    })()
   );
 });
 
@@ -29,7 +62,10 @@ self.addEventListener('fetch', (e) => {
   e.respondWith(
     caches.match(e.request)
       // It'd be tempting to leave that out, but if something at installation
-    // failed and the scripts are not accessible through the service worker, at least they can be fetched now.
-      .then(function (response) { if (response) { return response } else { console.warn("Fetch resulted in cache miss, trying again for", e.request); return fetch(e.request); }})
+      // failed and the scripts are not accessible through the service worker, at least they can be fetched now.
+      //
+      // Moreover, at least during testing on localhost, this also handles
+      // requests that are made to the OAuth server and the AS.
+      .then(function (response) { if (response) { return response } else { return fetch(e.request); }})
   );
 });

@@ -35,6 +35,18 @@ fieldset input { display: table-cell; }
     40% { color: green; }
 }
 
+/* This comes from a counter and blinks every time the counter goes up. */
+.mod2-0.flash-yellow { animation: 4s blink0-yellow; }
+.mod2-1.flash-yellow { animation: 4s blink1-yellow; }
+@keyframes blink0-yellow {
+    5% { background-color: yellow; }
+    40% { background-color: yellow; }
+}
+@keyframes blink1-yellow {
+    5% { background-color: yellow; }
+    40% { background-color: yellow; }
+}
+
 .new tt { animation: 10s new; }
 .new::after { content: ' (new)'; animation: 15s new-after; visibility: hidden; }
 @keyframes new {
