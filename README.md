@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: Copyright 2022 EDF (Électricité de France S.A.)
+SPDX-FileCopyrightText: Copyright 2022-2024 EDF (Électricité de France S.A.)
 SPDX-License-Identifier: BSD-3-Clause
 -->
 CoAP/ACE-OAuth PoC: Web application
@@ -37,7 +37,7 @@ License
 This project and all files contained in it is published under the
 BSD-3-Clause license as defined in [`LICENSES/BSD-3-Clause.txt`](LICENSES/BSD-3-Clause.txt).
 
-Copyright: 2022 EDF (Électricité de France S.A.)
+Copyright: 2022-2024 EDF (Électricité de France S.A.)
 
 Author: Christian Amsüss
 

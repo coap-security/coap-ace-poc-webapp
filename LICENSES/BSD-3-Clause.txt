@@ -1,4 +1,4 @@
-Copyright 2022 EDF (Électricité de France S.A.)
+Copyright 2022-2024 EDF (Électricité de France S.A.)
 
 This software is free software licensed under the BSD-3 Clause License as
 published by the Open Source Initiative.
